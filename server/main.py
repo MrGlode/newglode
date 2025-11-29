@@ -336,6 +336,13 @@ class GameServer:
 
             while accumulator >= WORLD_TICK_INTERVAL:
                 self.simulation.tick()
+
+                # Broadcast les entités modifiées
+                for entity in self.simulation.get_dirty_entities():
+                    print(f"Entity {entity.id} dirty: {entity.data}")
+                    cx, cy, _, _ = self.world.world_to_chunk(entity.x, entity.y)
+                    self.broadcast_to_chunk_subscribers((cx, cy), MSG_ENTITY_UPDATE, entity.to_dict())
+
                 accumulator -= WORLD_TICK_INTERVAL
 
             time.sleep(0.001)

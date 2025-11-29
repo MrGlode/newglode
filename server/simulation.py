@@ -1,4 +1,4 @@
-from typing import List, Dict
+from typing import List, Dict, Set
 from shared.entities import Entity, EntityType, Direction
 from shared.constants import WORLD_TICK_INTERVAL
 from server.world import World
@@ -9,9 +9,12 @@ class Simulation:
 
     def __init__(self, world: World):
         self.world = world
+        self.dirty_entities: Set[int] = set()
 
     def tick(self):
         """Exécute un tick de simulation."""
+        self.dirty_entities.clear()
+
         with self.world.lock:
             self.world.tick += 1
 
@@ -19,6 +22,18 @@ class Simulation:
             for chunk in self.world.chunks.values():
                 for entity in list(chunk.entities.values()):
                     self.update_entity(entity)
+
+    def mark_dirty(self, entity: Entity):
+        """Marque une entité comme modifiée."""
+        self.dirty_entities.add(entity.id)
+
+    def get_dirty_entities(self) -> List[Entity]:
+        """Retourne les entités modifiées depuis le dernier tick."""
+        entities = []
+        for entity_id in self.dirty_entities:
+            if entity_id in self.world.entities:
+                entities.append(self.world.entities[entity_id])
+        return entities
 
     def update_entity(self, entity: Entity):
         """Met à jour une entité selon son type."""
@@ -55,7 +70,9 @@ class Simulation:
             else:
                 new_items.append(item)
 
-        entity.data['items'] = new_items
+        if entity.data.get('items', []) != new_items:
+            entity.data['items'] = new_items
+            self.mark_dirty(entity)
 
     def update_miner(self, entity: Entity):
         """Extrait des ressources du sol."""
@@ -80,6 +97,7 @@ class Simulation:
                 output.append({'item': resource_map[tile], 'progress': 0})
                 entity.data['output'] = output
                 entity.data['cooldown'] = 60  # 1 seconde à 60 UPS
+                self.mark_dirty(entity)
 
     def update_furnace(self, entity: Entity):
         """Fond les minerais."""
@@ -108,6 +126,7 @@ class Simulation:
             entity.data['cooldown'] = 120  # 2 secondes
             entity.data['input'] = input_items
             entity.data['output'] = output
+            self.mark_dirty(entity)
 
     def update_assembler(self, entity: Entity):
         """Assemble des items selon une recette."""
