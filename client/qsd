@@ -1,0 +1,64 @@
+Connecté à localhost:5555
+Message reçu: type=2
+Message reçu: type=2, data={'success': True, 'player_id': 2, 'x': 4.640592540250007, 'y': -0.378164208849999, 'tick': 77536}
+Connecté en tant que joueur 2 à (4.640592540250007, -0.378164208849999)
+Message reçu: type=3
+Message reçu: type=3, data={'id': 1, 'name': 'TestPlayer', 'x': -11.11831295224996, 'y': -23.865509640549984}
+Joueur rejoint: {'id': 1, 'name': 'TestPlayer', 'x': -11.11831295224996, 'y': -23.865509640549984}
+Mon ID: 2, Autres joueurs: [1]
+Message reçu: type=7
+Mon ID: 2, Autres joueurs: [1]
+Message reçu: type=7
+Mon ID: 2, Autres joueurs: [1]
+Message reçu: type=7
+Mon ID: 2, Autres joueurs: [1]
+Message reçu: type=7
+Mon ID: 2, Autres joueurs: [1]
+Message reçu: type=7
+Mon ID: 2, Autres joueurs: [1]
+Message reçu: type=7
+Mon ID: 2, Autres joueurs: [1]
+Message reçu: type=7
+Mon ID: 2, Autres joueurs: [1]
+Message reçu: type=7
+Mon ID: 2, Autres joueurs: [1]
+Message reçu: type=13
+Message reçu: type=13, data={'server_time': 1764424760101.8792, 'client_time': 1764424760054.88, 'tick': 77568}
+Mon ID: 2, Autres joueurs: [1]
+Message reçu: type=13
+Message reçu: type=13, data={'server_time': 1764424761088.882, 'client_time': 1764424761062.885, 'tick': 77627}
+Mon ID: 2, Autres joueurs: [1]
+Message reçu: type=13
+Message reçu: type=13, data={'server_time': 1764424762081.7366, 'client_time': 1764424762064.7354, 'tick': 77687}
+Mon ID: 2, Autres joueurs: [1]
+Message reçu: type=5
+Message reçu: type=5, data={'id': 1, 'x': -11.376117952249963, 'y': -23.865509640549984}
+Joueur bouge: {'id': 1, 'x': -11.376117952249963, 'y': -23.865509640549984}
+Mon ID: 2, Autres joueurs: [1]
+Message reçu: type=5
+Message reçu: type=5, data={'id': 1, 'x': -11.628112952249962, 'y': -23.865509640549984}
+Joueur bouge: {'id': 1, 'x': -11.628112952249962, 'y': -23.865509640549984}
+Mon ID: 2, Autres joueurs: [1]
+Message reçu: type=5
+Message reçu: type=5, data={'id': 1, 'x': -11.896414452249964, 'y': -23.865509640549984}
+Joueur bouge: {'id': 1, 'x': -11.896414452249964, 'y': -23.865509640549984}
+Mon ID: 2, Autres joueurs: [1]
+Message reçu: type=5
+Message reçu: type=5, data={'id': 1, 'x': -12.161501452249963, 'y': -23.865509640549984}
+Joueur bouge: {'id': 1, 'x': -12.161501452249963, 'y': -23.865509640549984}
+Message reçu: type=5
+Message reçu: type=5, data={'id': 1, 'x': -12.41814545224996, 'y': -23.865509640549984}
+Joueur bouge: {'id': 1, 'x': -12.41814545224996, 'y': -23.865509640549984}
+Mon ID: 2, Autres joueurs: [1]
+Message reçu: type=5
+Message reçu: type=5, data={'id': 1, 'x': -12.588837452249962, 'y': -23.865509640549984}
+Joueur bouge: {'id': 1, 'x': -12.588837452249962, 'y': -23.865509640549984}
+Mon ID: 2, Autres joueurs: [1]
+Message reçu: type=13
+Message reçu: type=13, data={'server_time': 1764424763084.7378, 'client_time': 1764424763078.7375, 'tick': 77747}
+Mon ID: 2, Autres joueurs: [1]
+Message reçu: type=13
+Message reçu: type=13, data={'server_time': 1764424764143.7358, 'client_time': 1764424764097.7358, 'tick': 77811}
+Mon ID: 2, Autres joueurs: [1]
+Déconnexion du serveur
+Déconnecté du serveur
