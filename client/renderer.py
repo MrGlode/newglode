@@ -95,6 +95,9 @@ class Renderer:
         if game.show_debug:
             self.render_debug(game)
 
+        if game.inspected_entity:
+            self.render_inspection_panel(game)
+
         pygame.display.flip()
 
     def invalidate_chunk_cache(self):
@@ -212,14 +215,86 @@ class Renderer:
             direction = Direction(entity.get('dir', 0))
             self.draw_direction_arrow(x, y, direction)
 
-        # Affiche le contenu du buffer pour miners/furnaces/assemblers
+        # Affiche le contenu du buffer pour miners/furnaces/chests
         data = entity.get('data', {})
         output = data.get('output', [])
 
         if output:
-            # Affiche le nombre d'items
             count_text = self.small_font.render(str(len(output)), True, (255, 255, 0))
             self.screen.blit(count_text, (x + size // 2, y - size // 2 - 5))
+
+        # Affiche les items sur les convoyeurs
+        if entity_type == EntityType.CONVEYOR:
+            items = data.get('items', [])
+            direction = Direction(entity.get('dir', 0))
+            dx, dy = self.direction_to_delta(direction)
+
+            for item in items:
+                progress = item.get('progress', 0)
+                # Position de l'item sur le convoyeur
+                item_x = x + int((progress - 0.5) * self.tile_size * dx)
+                item_y = y + int((progress - 0.5) * self.tile_size * dy)
+
+                # Couleur selon le type d'item
+                item_color = self.get_item_color(item.get('item', ''))
+                pygame.draw.circle(self.screen, item_color, (item_x, item_y), 4)
+                pygame.draw.circle(self.screen, (255, 255, 255), (item_x, item_y), 4, 1)
+
+        # Affiche le nombre d'items dans les chests
+        if entity_type == EntityType.CHEST:
+            items = data.get('items', [])
+            if items:
+                count_text = self.small_font.render(str(len(items)), True, (255, 255, 0))
+                self.screen.blit(count_text, (x + size // 2, y - size // 2 - 5))
+
+        # Affiche input/output pour furnaces
+        if entity_type == EntityType.FURNACE:
+            input_items = data.get('input', [])
+            output_items = data.get('output', [])
+            if input_items or output_items:
+                text = f"{len(input_items)}>{len(output_items)}"
+                count_text = self.small_font.render(text, True, (255, 200, 0))
+                self.screen.blit(count_text, (x + size // 2, y - size // 2 - 5))
+
+        if entity_type == EntityType.INSERTER:
+            data = entity.get('data', {})
+            held_item = data.get('held_item', None)
+
+            if held_item:
+                progress = data.get('progress', 0.0)
+                direction = Direction(entity.get('dir', 0))
+                dx, dy = self.direction_to_delta(direction)
+
+                # Position de l'item : de -0.5 tile (source) à +0.5 tile (dest)
+                offset = progress - 0.5  # -0.5 à 0.5
+                item_x = x + int(offset * self.tile_size * dx)
+                item_y = y + int(offset * self.tile_size * dy)
+
+                # Dessine l'item
+                item_color = self.get_item_color(held_item.get('item', ''))
+                pygame.draw.circle(self.screen, item_color, (item_x, item_y), 5)
+                pygame.draw.circle(self.screen, (255, 255, 255), (item_x, item_y), 5, 1)
+
+    def direction_to_delta(self, direction: Direction) -> Tuple[int, int]:
+        """Convertit une direction en delta x, y."""
+        deltas = {
+            Direction.NORTH: (0, -1),
+            Direction.EAST: (1, 0),
+            Direction.SOUTH: (0, 1),
+            Direction.WEST: (-1, 0)
+        }
+        return deltas.get(direction, (0, 0))
+
+    def get_item_color(self, item_name: str) -> Tuple[int, int, int]:
+        """Retourne la couleur d'un item."""
+        colors = {
+            'iron_ore': (160, 160, 180),
+            'copper_ore': (184, 115, 51),
+            'coal': (40, 40, 40),
+            'iron_plate': (200, 200, 210),
+            'copper_plate': (210, 140, 80),
+        }
+        return colors.get(item_name, (150, 150, 150))
 
     def draw_direction_arrow(self, x: int, y: int, direction: Direction):
         """Dessine une flèche de direction."""
@@ -268,22 +343,48 @@ class Renderer:
 
     def render_cursor(self, game: 'Game'):
         """Rendu du curseur de construction."""
+        import math
+        from shared.tiles import TileType
+
         mouse_x, mouse_y = pygame.mouse.get_pos()
         world_x, world_y = self.screen_to_world(mouse_x, mouse_y)
 
-        # Arrondit à la tile
         tile_x = math.floor(world_x)
         tile_y = math.floor(world_y)
 
         screen_x, screen_y = self.world_to_screen(tile_x, tile_y)
 
-        # Curseur tile (carré)
         half = self.tile_size // 2
         rect = pygame.Rect(screen_x - half, screen_y - half, self.tile_size, self.tile_size)
 
         if game.selected_entity_type is not None:
-            # Mode construction
-            pygame.draw.rect(self.screen, (0, 255, 0), rect, 2)
+            # Vérifie si placement valide
+            tile = self.world_view.get_tile(tile_x, tile_y)
+            entity_at = self.world_view.get_entity_at(tile_x, tile_y)
+
+            valid = True
+
+            # Pas sur l'eau
+            if tile == TileType.WATER:
+                valid = False
+
+            # Pas sur une entité existante
+            if entity_at:
+                valid = False
+
+            # Foreuse uniquement sur minerai
+            if game.selected_entity_type == EntityType.MINER:
+                if tile not in (TileType.IRON_ORE, TileType.COPPER_ORE, TileType.COAL):
+                    valid = False
+
+            # Four uniquement sur herbe/terre
+            if game.selected_entity_type == EntityType.FURNACE:
+                if tile not in (TileType.GRASS, TileType.DIRT):
+                    valid = False
+
+            # Couleur selon validité
+            cursor_color = (0, 255, 0) if valid else (255, 0, 0)
+            pygame.draw.rect(self.screen, cursor_color, rect, 2)
 
             # Preview de l'entité
             entity_color = self.ENTITY_COLORS.get(EntityType(game.selected_entity_type), (200, 200, 200))
@@ -449,3 +550,154 @@ class Renderer:
             surface = self.small_font.render(line, True, (200, 200, 200))
             self.screen.blit(surface, (10, y))
             y += 18
+
+    def render_inspection_panel(self, game: 'Game'):
+        """Affiche le panneau d'inspection d'une entité."""
+        entity = game.inspected_entity
+
+        if not entity:
+            return
+
+        screen_w = self.screen.get_width()
+        screen_h = self.screen.get_height()
+
+        # Dimensions du panneau
+        panel_width = 250
+        panel_height = 300
+        panel_x = screen_w - panel_width - 20
+        panel_y = (screen_h - panel_height) // 2
+
+        # Fond du panneau
+        panel_rect = pygame.Rect(panel_x, panel_y, panel_width, panel_height)
+        pygame.draw.rect(self.screen, (30, 30, 40), panel_rect)
+        pygame.draw.rect(self.screen, (100, 100, 120), panel_rect, 2)
+
+        # Titre
+        entity_type = EntityType(entity['type'])
+
+        names = {
+            EntityType.MINER: "Foreuse",
+            EntityType.FURNACE: "Four",
+            EntityType.CHEST: "Coffre",
+            EntityType.ASSEMBLER: "Assembleur",
+            EntityType.CONVEYOR: "Convoyeur",
+            EntityType.INSERTER: "Inserter",
+        }
+
+        title = names.get(entity_type, "Entité")
+        title_surface = self.font.render(title, True, (255, 255, 255))
+        self.screen.blit(title_surface, (panel_x + 10, panel_y + 10))
+
+        # Ligne de séparation
+        pygame.draw.line(self.screen, (100, 100, 120),
+                         (panel_x + 10, panel_y + 40),
+                         (panel_x + panel_width - 10, panel_y + 40))
+
+        y_offset = panel_y + 50
+        data = entity.get('data', {})
+
+        # Affiche selon le type
+        if entity_type == EntityType.MINER:
+            output = data.get('output', [])
+            self.render_item_list("Buffer sortie", output, panel_x + 10, y_offset, panel_width - 20)
+
+        elif entity_type == EntityType.FURNACE:
+            input_items = data.get('input', [])
+            output_items = data.get('output', [])
+            y_offset = self.render_item_list("Entrée", input_items, panel_x + 10, y_offset, panel_width - 20)
+            y_offset += 10
+            self.render_item_list("Sortie", output_items, panel_x + 10, y_offset, panel_width - 20)
+
+        elif entity_type == EntityType.CHEST:
+            items = data.get('items', [])
+            self.render_item_list("Contenu", items, panel_x + 10, y_offset, panel_width - 20)
+
+        elif entity_type == EntityType.CONVEYOR:
+            items = data.get('items', [])
+            self.render_item_list("Items", items, panel_x + 10, y_offset, panel_width - 20)
+
+        elif entity_type == EntityType.ASSEMBLER:
+            input_items = data.get('input', [])
+            output_items = data.get('output', [])
+            selected_recipe = data.get('recipe', None)
+
+            # Affiche la recette sélectionnée
+            recipe_text = selected_recipe if selected_recipe else "(aucune recette)"
+            recipe_label = self.small_font.render(f"Recette: {recipe_text}", True, (200, 200, 100))
+            self.screen.blit(recipe_label, (panel_x + 10, y_offset))
+            y_offset += 25
+
+            # Boutons de recettes
+            recipes = ['iron_gear', 'copper_wire', 'circuit', 'automation_science']
+
+            for i, recipe in enumerate(recipes):
+                btn_x = panel_x + 10 + (i % 2) * 115
+                btn_y = y_offset + (i // 2) * 30
+                btn_rect = pygame.Rect(btn_x, btn_y, 110, 25)
+
+                # Couleur du bouton
+                if selected_recipe == recipe:
+                    btn_color = (80, 120, 80)
+                else:
+                    btn_color = (60, 60, 70)
+
+                pygame.draw.rect(self.screen, btn_color, btn_rect)
+                pygame.draw.rect(self.screen, (100, 100, 120), btn_rect, 1)
+
+                # Nom de la recette
+                recipe_name = recipe.replace('_', ' ').title()
+                text = self.small_font.render(recipe_name, True, (220, 220, 220))
+                text_rect = text.get_rect(center=btn_rect.center)
+                self.screen.blit(text, text_rect)
+
+                # Stocke le rect pour la détection de clic
+                if not hasattr(self, '_recipe_buttons'):
+                    self._recipe_buttons = {}
+
+                self._recipe_buttons[recipe] = btn_rect
+
+            y_offset += 70
+            y_offset = self.render_item_list("Entrée", input_items, panel_x + 10, y_offset, panel_width - 20)
+            y_offset += 10
+
+            self.render_item_list("Sortie", output_items, panel_x + 10, y_offset, panel_width - 20)
+
+        # Instructions
+        help_text = self.small_font.render("Échap ou clic droit pour fermer", True, (150, 150, 150))
+        self.screen.blit(help_text, (panel_x + 10, panel_y + panel_height - 25))
+
+    def render_item_list(self, title: str, items: list, x: int, y: int, width: int) -> int:
+        """Affiche une liste d'items groupés par type. Retourne la position Y finale."""
+        # Titre de la section
+        title_surface = self.small_font.render(f"{title}:", True, (200, 200, 200))
+        self.screen.blit(title_surface, (x, y))
+        y += 20
+
+        if not items:
+            empty_text = self.small_font.render("(vide)", True, (100, 100, 100))
+            self.screen.blit(empty_text, (x + 10, y))
+            return y + 20
+
+        # Groupe les items par type
+        item_counts = {}
+        for item in items:
+            item_name = item.get('item', 'inconnu')
+            item_counts[item_name] = item_counts.get(item_name, 0) + 1
+
+        # Affiche chaque type
+        for item_name, count in item_counts.items():
+            color = self.get_item_color(item_name)
+
+            # Petit carré de couleur
+            pygame.draw.rect(self.screen, color, (x + 10, y + 2, 12, 12))
+            pygame.draw.rect(self.screen, (255, 255, 255), (x + 10, y + 2, 12, 12), 1)
+
+            # Nom et quantité
+            display_name = item_name.replace('_', ' ').title()
+            text = f"{display_name}: {count}"
+            text_surface = self.small_font.render(text, True, (220, 220, 220))
+            self.screen.blit(text_surface, (x + 28, y))
+
+            y += 18
+
+        return y

@@ -9,7 +9,7 @@ from shared.protocol import (
     MSG_AUTH, MSG_AUTH_RESPONSE, MSG_PLAYER_JOIN, MSG_PLAYER_LEAVE,
     MSG_PLAYER_MOVE, MSG_CHUNK_REQUEST, MSG_CHUNK_DATA,
     MSG_ENTITY_UPDATE, MSG_ENTITY_ADD, MSG_ENTITY_REMOVE,
-    MSG_PLAYER_ACTION, MSG_WORLD_TICK, MSG_SYNC
+    MSG_PLAYER_ACTION, MSG_WORLD_TICK, MSG_SYNC, ACTION_CONFIGURE
 )
 from shared.constants import (
     WORLD_TICK_RATE, WORLD_TICK_INTERVAL,
@@ -230,6 +230,7 @@ class GameServer:
     def handle_player_action(self, client_id: int, data: dict):
         from shared.protocol import ACTION_BUILD, ACTION_DESTROY
         from shared.entities import EntityType, Direction
+        from shared.tiles import TileType
 
         action = data['action']
         x = data['x']
@@ -238,6 +239,31 @@ class GameServer:
         if action == ACTION_BUILD:
             entity_type = EntityType(data['entity_type'])
             direction = Direction(data.get('direction', 0))
+
+            # Vérifie la tile
+            tile = self.world.get_tile(x, y)
+
+            # Pas de construction sur l'eau
+            if tile == TileType.WATER:
+                return
+
+            # Foreuses uniquement sur minerai
+            if entity_type == EntityType.MINER:
+                if tile not in (TileType.IRON_ORE, TileType.COPPER_ORE, TileType.COAL):
+                    return
+
+            # Fours uniquement sur herbe ou terre
+            if entity_type == EntityType.FURNACE:
+                if tile not in (TileType.GRASS, TileType.DIRT):
+                    return
+
+            # Convoyeurs, assemblers, chests, inserters sur tout sauf eau
+            # (déjà géré par le check plus haut)
+
+            # Vérifie qu'il n'y a pas déjà une entité
+            existing = self.world.get_entity_at(x, y)
+            if existing:
+                return
 
             entity = self.world.create_entity(entity_type, x, y, direction=direction)
 
@@ -252,6 +278,16 @@ class GameServer:
             if entity:
                 cx, cy, _, _ = self.world.world_to_chunk(entity.x, entity.y)
                 self.broadcast_to_chunk_subscribers((cx, cy), MSG_ENTITY_REMOVE, {'id': entity_id})
+
+        elif action == ACTION_CONFIGURE:
+            entity_id = data['entity_id']
+            recipe = data.get('recipe', None)
+
+            entity = self.world.entities.get(entity_id)
+            if entity:
+                entity.data['recipe'] = recipe
+                cx, cy, _, _ = self.world.world_to_chunk(entity.x, entity.y)
+                self.broadcast_to_chunk_subscribers((cx, cy), MSG_ENTITY_UPDATE, entity.to_dict())
 
     def update_chunk_subscriptions(self, client_id: int):
         """Met à jour les chunks auxquels un client est souscrit."""

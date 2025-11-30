@@ -175,3 +175,13 @@ class NetworkClient:
             'x': 0,
             'y': 0
         })
+
+    def send_set_recipe(self, entity_id: int, recipe: str):
+        from shared.protocol import MSG_PLAYER_ACTION, ACTION_CONFIGURE
+        self.send(MSG_PLAYER_ACTION, {
+            'action': ACTION_CONFIGURE,
+            'entity_id': entity_id,
+            'recipe': recipe,
+            'x': 0,
+            'y': 0
+        })
