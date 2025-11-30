@@ -71,10 +71,18 @@ class InputHandler:
         if minimap_x <= mouse_x <= minimap_x + minimap_size and minimap_y <= mouse_y <= minimap_y + minimap_size:
             # Zoom minimap
             renderer = self.game.renderer
-            if direction > 0:  # Scroll up = zoom in (moins de tiles)
+            if direction > 0:
                 renderer.minimap_zoom_level = max(0, renderer.minimap_zoom_level - 1)
-            else:  # Scroll down = zoom out (plus de tiles)
+            else:
                 renderer.minimap_zoom_level = min(3, renderer.minimap_zoom_level + 1)
+        else:
+            # Zoom map principale
+            renderer = self.game.renderer
+            if direction > 0:
+                renderer.tile_size = min(64, renderer.tile_size + 4)
+            else:
+                renderer.tile_size = max(16, renderer.tile_size - 4)
+            # Plus besoin d'invalider le cache !
 
     def handle_keyup(self, key: int):
         pass

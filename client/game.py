@@ -1,3 +1,4 @@
+import math
 import random
 
 import pygame
@@ -155,8 +156,8 @@ class Game:
         world_x, world_y = self.renderer.screen_to_world(mouse_x, mouse_y)
 
         # Arrondit à la tile
-        tile_x = int(world_x)
-        tile_y = int(world_y)
+        tile_x = math.floor(world_x)
+        tile_y = math.floor(world_y)
 
         if self.network:
             self.network.send_build(tile_x, tile_y, self.selected_entity_type, self.selected_direction)

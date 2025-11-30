@@ -1,3 +1,5 @@
+import math
+
 import pygame
 from typing import TYPE_CHECKING, Tuple
 
@@ -40,11 +42,19 @@ class Renderer:
         self.font = pygame.font.Font(None, 24)
         self.small_font = pygame.font.Font(None, 18)
 
-
-        # Offset pour le rendu isométrique
         self.iso_tile_width = TILE_SIZE
         self.iso_tile_height = TILE_SIZE // 2
         self.tile_size = 32
+
+        # Cache chunks
+        self._chunk_surfaces = {}
+        self._old_chunk_surfaces = {}
+        self._old_tile_size = 32
+        self._cached_tile_size = 32
+        self._chunks_rebuilt_this_frame = 0
+
+        # Minimap
+        self.minimap_zoom_level = 1
 
     def world_to_screen(self, world_x: float, world_y: float) -> Tuple[int, int]:
         """Convertit coordonnées monde en coordonnées écran (2D standard)."""
@@ -64,36 +74,43 @@ class Renderer:
         rel_x = screen_x - self.screen.get_width() // 2
         rel_y = screen_y - self.screen.get_height() // 2
 
-        world_x = rel_x / self.tile_size
-        world_y = rel_y / self.tile_size
+        world_x = rel_x / self.tile_size + self.world_view.camera_x
+        world_y = rel_y / self.tile_size + self.world_view.camera_y
 
-        world_x += self.world_view.camera_x
-        world_y += self.world_view.camera_y
+        world_x += 0.5
+        world_y += 0.5
 
         return world_x, world_y
 
     def render(self, game: 'Game'):
+        self._chunks_rebuilt_this_frame = 0
         self.screen.fill((20, 20, 30))
         self.render_world(game)
         self.render_entities(game)
         self.render_players(game)
         self.render_cursor(game)
         self.render_minimap(game)
+        self.render_ui(game)
 
         if game.show_debug:
             self.render_debug(game)
 
         pygame.display.flip()
 
+    def invalidate_chunk_cache(self):
+        """Invalide le cache des chunks."""
+        # Sauvegarde l'ancien cache et tile_size
+        self._old_chunk_surfaces = self._chunk_surfaces.copy()
+        self._old_tile_size = getattr(self, '_cached_tile_size', self.tile_size)
+        self._cached_tile_size = self.tile_size
+        self._chunk_surfaces = {}
+
     def render_world(self, game: 'Game'):
         """Rendu des chunks (optimisé avec cache)."""
         screen_w = self.screen.get_width()
         screen_h = self.screen.get_height()
-
         cam_x = self.world_view.camera_x
         cam_y = self.world_view.camera_y
-
-        # Calcule les chunks visibles
         half_w = screen_w // 2
         half_h = screen_h // 2
 
@@ -102,32 +119,47 @@ class Renderer:
         min_cy = int((cam_y - half_h / self.tile_size) // 32) - 1
         max_cy = int((cam_y + half_h / self.tile_size) // 32) + 1
 
+        target_chunk_size = 32 * self.tile_size
+
+        # Cache des surfaces scalées pour ce tile_size
+        if not hasattr(self, '_scaled_cache'):
+            self._scaled_cache = {}
+            self._scaled_tile_size = self.tile_size
+
+        # Invalide le cache scalé si tile_size a changé
+        if self._scaled_tile_size != self.tile_size:
+            self._scaled_cache.clear()
+            self._scaled_tile_size = self.tile_size
+
         for cx in range(min_cx, max_cx + 1):
             for cy in range(min_cy, max_cy + 1):
                 surface = self.get_chunk_surface(cx, cy)
                 if surface:
-                    # Position écran du coin haut-gauche du chunk
                     chunk_world_x = cx * 32
                     chunk_world_y = cy * 32
                     screen_x, screen_y = self.world_to_screen(chunk_world_x, chunk_world_y)
-
-                    # Ajuste car world_to_screen centre sur la tile
                     screen_x -= self.tile_size // 2
                     screen_y -= self.tile_size // 2
+
+                    # Scale avec cache
+                    if self.tile_size != 32:
+                        if (cx, cy) not in self._scaled_cache:
+                            self._scaled_cache[(cx, cy)] = pygame.transform.scale(surface, (target_chunk_size,
+                                                                                            target_chunk_size))
+                        surface = self._scaled_cache[(cx, cy)]
 
                     self.screen.blit(surface, (screen_x, screen_y))
 
     def get_chunk_surface(self, cx: int, cy: int) -> pygame.Surface:
-        """Retourne une surface cachée pour le chunk."""
-        if not hasattr(self, '_chunk_surfaces'):
-            self._chunk_surfaces = {}
-
+        """Retourne une surface cachée pour le chunk (toujours à tile_size=32)."""
         if (cx, cy) not in self._chunk_surfaces:
             chunk = self.world_view.chunks.get((cx, cy))
             if not chunk:
                 return None
 
-            chunk_size = 32 * self.tile_size
+            # Toujours construire à taille fixe (32 pixels par tile)
+            base_tile_size = 32
+            chunk_size = 32 * base_tile_size
             surface = pygame.Surface((chunk_size, chunk_size))
 
             for ty in range(32):
@@ -135,15 +167,11 @@ class Renderer:
                     tile_type = chunk['tiles'][ty][tx]
                     if tile_type != TileType.VOID:
                         color = self.TILE_COLORS.get(TileType(tile_type), (100, 100, 100))
-                        x = tx * self.tile_size
-                        y = ty * self.tile_size
-
-                        # Fond
-                        surface.fill(color, (x, y, self.tile_size, self.tile_size))
-
-                        # Bordure
+                        x = tx * base_tile_size
+                        y = ty * base_tile_size
+                        surface.fill(color, (x, y, base_tile_size, base_tile_size))
                         darker = tuple(max(0, c - 30) for c in color)
-                        pygame.draw.rect(surface, darker, (x, y, self.tile_size, self.tile_size), 1)
+                        pygame.draw.rect(surface, darker, (x, y, base_tile_size, base_tile_size), 1)
 
             self._chunk_surfaces[(cx, cy)] = surface
 
@@ -171,18 +199,27 @@ class Renderer:
 
     def draw_entity(self, x: int, y: int, color: Tuple[int, int, int], entity: dict):
         """Dessine une entité."""
-        size = self.iso_tile_width // 3
+        size = self.tile_size // 3
 
         # Rectangle simple pour l'instant
         rect = pygame.Rect(x - size // 2, y - size // 2, size, size)
         pygame.draw.rect(self.screen, color, rect)
         pygame.draw.rect(self.screen, (255, 255, 255), rect, 1)
 
-        # Flèche de direction pour convoyeurs/inserters
+        # Flèche de direction pour convoyeurs/inserters/miners
         entity_type = EntityType(entity['type'])
         if entity_type in (EntityType.CONVEYOR, EntityType.INSERTER, EntityType.MINER):
             direction = Direction(entity.get('dir', 0))
             self.draw_direction_arrow(x, y, direction)
+
+        # Affiche le contenu du buffer pour miners/furnaces/assemblers
+        data = entity.get('data', {})
+        output = data.get('output', [])
+
+        if output:
+            # Affiche le nombre d'items
+            count_text = self.small_font.render(str(len(output)), True, (255, 255, 0))
+            self.screen.blit(count_text, (x + size // 2, y - size // 2 - 5))
 
     def draw_direction_arrow(self, x: int, y: int, direction: Direction):
         """Dessine une flèche de direction."""
@@ -235,8 +272,8 @@ class Renderer:
         world_x, world_y = self.screen_to_world(mouse_x, mouse_y)
 
         # Arrondit à la tile
-        tile_x = int(world_x)
-        tile_y = int(world_y)
+        tile_x = math.floor(world_x)
+        tile_y = math.floor(world_y)
 
         screen_x, screen_y = self.world_to_screen(tile_x, tile_y)
 
@@ -261,9 +298,8 @@ class Renderer:
     def render_ui(self, game: 'Game'):
         """Rendu de l'interface utilisateur."""
         # Barre d'outils en bas
-        toolbar_height = 60
+        toolbar_height = 80
         toolbar_y = self.screen.get_height() - toolbar_height
-
         pygame.draw.rect(self.screen, (40, 40, 50), (0, toolbar_y, self.screen.get_width(), toolbar_height))
 
         # Boutons d'entités
@@ -282,30 +318,36 @@ class Renderer:
 
             # Sélectionné ?
             if game.selected_entity_type == entity_type:
-                pygame.draw.rect(self.screen, (100, 100, 100), (x_offset - 5, toolbar_y + 5, 50, 50))
+                pygame.draw.rect(self.screen, (100, 100, 100), (x_offset - 5, toolbar_y + 5, 50, 70))
 
+            # Bouton coloré
             pygame.draw.rect(self.screen, color, (x_offset, toolbar_y + 10, 40, 40))
 
-            # Raccourci
+            # Raccourci clavier
             key_text = self.small_font.render(pygame.key.name(key).upper(), True, (200, 200, 200))
-            self.screen.blit(key_text, (x_offset + 15, toolbar_y + 45))
+            key_rect = key_text.get_rect(center=(x_offset + 20, toolbar_y + 30))
+            self.screen.blit(key_text, key_rect)
 
-            x_offset += 60
+            # Nom de l'entité
+            name_text = self.small_font.render(name, True, (180, 180, 180))
+            name_rect = name_text.get_rect(center=(x_offset + 20, toolbar_y + 60))
+            self.screen.blit(name_text, name_rect)
 
-        # Instructions
+            x_offset += 70
+
+        # Instructions à droite
         instructions = [
             "ZQSD: Déplacer",
             "1-6: Sélectionner",
             "R: Tourner",
-            "Clic gauche: Construire",
-            "Clic droit: Détruire",
+            "Clic G: Construire",
+            "Clic D: Détruire",
             "F3: Debug",
         ]
-
-        x = self.screen.get_width() - 150
+        x = self.screen.get_width() - 130
         for i, text in enumerate(instructions):
             surface = self.small_font.render(text, True, (150, 150, 150))
-            self.screen.blit(surface, (x, toolbar_y + 5 + i * 15))
+            self.screen.blit(surface, (x, toolbar_y + 5 + i * 12))
 
     def render_loading(self, game: 'Game'):
         """Écran de chargement."""

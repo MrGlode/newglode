@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import msgpack
 import struct
 import time
@@ -41,7 +39,7 @@ def unpack_message(buffer: bytes) -> tuple[dict | None, bytes]:
     if len(buffer) < 2 + msg_len:
         return None, buffer
 
-    payload = msgpack.unpackb(buffer[2:2 + msg_len], raw=False, strict_map_key=False)
+    payload = msgpack.unpackb(buffer[2:2 + msg_len], raw=False)
     return payload, buffer[2 + msg_len:]
 
 

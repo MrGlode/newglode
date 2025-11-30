@@ -339,7 +339,7 @@ class GameServer:
 
                 # Broadcast les entités modifiées
                 for entity in self.simulation.get_dirty_entities():
-                    print(f"Entity {entity.id} dirty: {entity.data}")
+                    print(f"Entity {entity.id} updated: output={entity.data.get('output', [])}")
                     cx, cy, _, _ = self.world.world_to_chunk(entity.x, entity.y)
                     self.broadcast_to_chunk_subscribers((cx, cy), MSG_ENTITY_UPDATE, entity.to_dict())
 
