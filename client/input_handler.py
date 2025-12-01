@@ -2,6 +2,7 @@ import pygame
 from typing import TYPE_CHECKING
 
 from shared.entities import EntityType
+from client.audio import get_audio
 
 if TYPE_CHECKING:
     from client.game import Game
@@ -47,18 +48,38 @@ class InputHandler:
             new = entity_keys[key]
             # Toggle si même touche
             self.game.selected_entity_type = None if current == new else new
+            get_audio().play_select()
 
         elif key == pygame.K_r:
             self.game.rotate_selection()
 
         elif key == pygame.K_F3:
             self.game.show_debug = not self.game.show_debug
+            get_audio().play_ui_click()
 
         elif key == pygame.K_ESCAPE:
             if self.game.inspected_entity:
                 self.game.close_inspection()
             else:
                 self.game.selected_entity_type = None
+                get_audio().play_ui_click()
+
+        elif key == pygame.K_m:
+            # Toggle audio
+            enabled = get_audio().toggle_audio()
+            print(f"Audio: {'activé' if enabled else 'désactivé'}")
+
+        elif key == pygame.K_PLUS or key == pygame.K_KP_PLUS or key == pygame.K_EQUALS:
+            # Augmenter volume
+            audio = get_audio()
+            audio.set_master_volume(audio.master_volume + 0.1)
+            print(f"Volume: {int(audio.master_volume * 100)}%")
+
+        elif key == pygame.K_MINUS or key == pygame.K_KP_MINUS:
+            # Diminuer volume
+            audio = get_audio()
+            audio.set_master_volume(audio.master_volume - 0.1)
+            print(f"Volume: {int(audio.master_volume * 100)}%")
 
     def handle_mousewheel(self, direction: int):
         mouse_x, mouse_y = pygame.mouse.get_pos()
@@ -81,11 +102,12 @@ class InputHandler:
         else:
             # Zoom map principale
             renderer = self.game.renderer
+            old_size = renderer.tile_size
+
             if direction > 0:
                 renderer.tile_size = min(64, renderer.tile_size + 4)
             else:
                 renderer.tile_size = max(16, renderer.tile_size - 4)
-            # Plus besoin d'invalider le cache !
 
     def handle_keyup(self, key: int):
         pass
@@ -135,9 +157,25 @@ class InputHandler:
                 entity = self.game.inspected_entity
                 if entity and self.game.network:
                     self.game.network.send_set_recipe(entity['id'], recipe)
+                    get_audio().play_ui_click()
                 return True
 
         return False
+
+    def is_click_on_inspection_panel(self) -> bool:
+        """Vérifie si le clic est sur le panneau d'inspection."""
+        mouse_x, mouse_y = pygame.mouse.get_pos()
+        screen_w = self.game.screen.get_width()
+        screen_h = self.game.screen.get_height()
+
+        # Panneau à droite
+        panel_width = 250
+        panel_height = 300
+        panel_x = screen_w - panel_width - 20
+        panel_y = (screen_h - panel_height) // 2
+
+        return (panel_x <= mouse_x <= panel_x + panel_width and
+                panel_y <= mouse_y <= panel_y + panel_height)
 
     def update_movement(self):
         keys = pygame.key.get_pressed()
@@ -155,18 +193,3 @@ class InputHandler:
             vx += 1
 
         self.game.set_velocity(vx, vy)
-
-    def is_click_on_inspection_panel(self) -> bool:
-        """Vérifie si le clic est sur le panneau d'inspection."""
-        mouse_x, mouse_y = pygame.mouse.get_pos()
-        screen_w = self.game.screen.get_width()
-        screen_h = self.game.screen.get_height()
-
-        # Panneau à droite
-        panel_width = 250
-        panel_height = 300
-        panel_x = screen_w - panel_width - 20
-        panel_y = (screen_h - panel_height) // 2
-
-        return (panel_x <= mouse_x <= panel_x + panel_width and
-                panel_y <= mouse_y <= panel_y + panel_height)

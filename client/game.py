@@ -1,5 +1,5 @@
-import math
 import random
+import math
 
 import pygame
 import time
@@ -9,6 +9,7 @@ from client.network import NetworkClient
 from client.renderer import Renderer
 from client.input_handler import InputHandler
 from client.world_view import WorldView
+from client.audio import get_audio
 from shared.constants import WORLD_TICK_INTERVAL
 
 
@@ -39,7 +40,7 @@ class Game:
         self.connecting = False
         self.selected_entity_type = None
         self.selected_direction = 0
-        self.inspected_entity = None  # Entité actuellement inspectée
+        self.inspected_entity = None
 
         # Debug
         self.show_debug = True
@@ -144,53 +145,20 @@ class Game:
                     self.network.request_chunk(cx, cy)
                     self.world_view.pending_chunks.add((cx, cy))
 
+        # Met à jour les sons des machines
+        audio = get_audio()
+        audio.update_machine_sounds(
+            self.world_view.entities,
+            self.player_x,
+            self.player_y
+        )
+
     def set_velocity(self, vx: float, vy: float):
         self.velocity_x = vx
         self.velocity_y = vy
 
-    def build_at_cursor(self):
-        import math
-
-        if not self.connected or self.selected_entity_type is None:
-            return
-
-        mouse_x, mouse_y = pygame.mouse.get_pos()
-        world_x, world_y = self.renderer.screen_to_world(mouse_x, mouse_y)
-
-        tile_x = math.floor(world_x)
-        tile_y = math.floor(world_y)
-
-        if self.network:
-            self.network.send_build(tile_x, tile_y, self.selected_entity_type, self.selected_direction)
-
-    def destroy_at_cursor(self):
-        import math
-
-        if not self.connected:
-            return
-
-        mouse_x, mouse_y = pygame.mouse.get_pos()
-        world_x, world_y = self.renderer.screen_to_world(mouse_x, mouse_y)
-
-        tile_x = math.floor(world_x)
-        tile_y = math.floor(world_y)
-
-        # Trouve l'entité à cette position
-        entity = self.world_view.get_entity_at(tile_x, tile_y)
-        if entity and self.network:
-            self.network.send_destroy(entity['id'])
-
-    def rotate_selection(self):
-        self.selected_direction = (self.selected_direction + 1) % 4
-
-    def cleanup(self):
-        if self.network:
-            self.network.disconnect()
-
     def inspect_at_cursor(self):
         """Inspecte l'entité sous le curseur."""
-        import math
-
         if not self.connected:
             return False
 
@@ -203,6 +171,7 @@ class Game:
         entity = self.world_view.get_entity_at(tile_x, tile_y)
         if entity:
             self.inspected_entity = entity
+            get_audio().play_ui_click()
             return True
 
         return False
@@ -210,3 +179,41 @@ class Game:
     def close_inspection(self):
         """Ferme l'interface d'inspection."""
         self.inspected_entity = None
+        get_audio().play_ui_click()
+
+    def build_at_cursor(self):
+        if not self.connected or self.selected_entity_type is None:
+            return
+
+        mouse_x, mouse_y = pygame.mouse.get_pos()
+        world_x, world_y = self.renderer.screen_to_world(mouse_x, mouse_y)
+
+        tile_x = math.floor(world_x)
+        tile_y = math.floor(world_y)
+
+        if self.network:
+            self.network.send_build(tile_x, tile_y, self.selected_entity_type, self.selected_direction)
+            get_audio().play_build()
+
+    def destroy_at_cursor(self):
+        if not self.connected:
+            return
+
+        mouse_x, mouse_y = pygame.mouse.get_pos()
+        world_x, world_y = self.renderer.screen_to_world(mouse_x, mouse_y)
+
+        tile_x = math.floor(world_x)
+        tile_y = math.floor(world_y)
+
+        entity = self.world_view.get_entity_at(tile_x, tile_y)
+        if entity and self.network:
+            self.network.send_destroy(entity['id'])
+            get_audio().play_destroy()
+
+    def rotate_selection(self):
+        self.selected_direction = (self.selected_direction + 1) % 4
+        get_audio().play_ui_click()
+
+    def cleanup(self):
+        if self.network:
+            self.network.disconnect()

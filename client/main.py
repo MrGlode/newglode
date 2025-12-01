@@ -2,6 +2,7 @@ import pygame
 import sys
 
 from client.game import Game
+from client.audio import get_audio
 
 
 def main():
@@ -9,6 +10,11 @@ def main():
 
     # Charge la configuration depuis MongoDB
     _load_config()
+
+    # Initialise l'audio
+    audio = get_audio()
+    audio.load_sounds()
+    audio.generate_placeholder_sounds()
 
     screen = pygame.display.set_mode((1280, 720), pygame.RESIZABLE | pygame.HWSURFACE | pygame.DOUBLEBUF)
     pygame.display.set_caption("Factorio-like")
@@ -21,6 +27,7 @@ def main():
         pass
     finally:
         game.cleanup()
+        audio.cleanup()
         pygame.quit()
 
 
