@@ -102,3 +102,11 @@ class World:
                 if (cx, cy) in self.chunks:
                     self.chunks[(cx, cy)].remove_entity(entity_id)
             return entity
+
+    def get_entity_at(self, x: int, y: int) -> Optional[Entity]:
+        """Retourne l'entité à la position donnée, ou None."""
+        with self.lock:
+            for entity in self.entities.values():
+                if int(entity.x) == x and int(entity.y) == y:
+                    return entity
+            return None

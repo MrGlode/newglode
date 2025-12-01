@@ -55,7 +55,10 @@ class InputHandler:
             self.game.show_debug = not self.game.show_debug
 
         elif key == pygame.K_ESCAPE:
-            self.game.selected_entity_type = None
+            if self.game.inspected_entity:
+                self.game.close_inspection()
+            else:
+                self.game.selected_entity_type = None
 
     def handle_mousewheel(self, direction: int):
         mouse_x, mouse_y = pygame.mouse.get_pos()
@@ -89,9 +92,52 @@ class InputHandler:
 
     def handle_mousedown(self, button: int):
         if button == 1:  # Clic gauche
+            # Vérifie si on clique sur un bouton de recette
+            if self.game.inspected_entity:
+                from shared.entities import EntityType
+                entity_type = EntityType(self.game.inspected_entity['type'])
+
+                if entity_type == EntityType.ASSEMBLER:
+                    if self.handle_recipe_click():
+                        return
+
+                # Vérifie si on clique sur le panneau d'inspection
+                if self.is_click_on_inspection_panel():
+                    return
+
+                self.game.close_inspection()
+                return
+
+            # Essaie d'inspecter une entité existante
+            if self.game.inspect_at_cursor():
+                return
+
+            # Sinon, construit
             self.game.build_at_cursor()
+
         elif button == 3:  # Clic droit
-            self.game.destroy_at_cursor()
+            if self.game.inspected_entity:
+                self.game.close_inspection()
+            else:
+                self.game.destroy_at_cursor()
+
+    def handle_recipe_click(self) -> bool:
+        """Gère le clic sur un bouton de recette. Retourne True si un bouton a été cliqué."""
+        mouse_x, mouse_y = pygame.mouse.get_pos()
+        renderer = self.game.renderer
+
+        if not hasattr(renderer, '_recipe_buttons'):
+            return False
+
+        for recipe, rect in renderer._recipe_buttons.items():
+            if rect.collidepoint(mouse_x, mouse_y):
+                # Envoie le changement de recette au serveur
+                entity = self.game.inspected_entity
+                if entity and self.game.network:
+                    self.game.network.send_set_recipe(entity['id'], recipe)
+                return True
+
+        return False
 
     def update_movement(self):
         keys = pygame.key.get_pressed()
@@ -109,3 +155,18 @@ class InputHandler:
             vx += 1
 
         self.game.set_velocity(vx, vy)
+
+    def is_click_on_inspection_panel(self) -> bool:
+        """Vérifie si le clic est sur le panneau d'inspection."""
+        mouse_x, mouse_y = pygame.mouse.get_pos()
+        screen_w = self.game.screen.get_width()
+        screen_h = self.game.screen.get_height()
+
+        # Panneau à droite
+        panel_width = 250
+        panel_height = 300
+        panel_x = screen_w - panel_width - 20
+        panel_y = (screen_h - panel_height) // 2
+
+        return (panel_x <= mouse_x <= panel_x + panel_width and
+                panel_y <= mouse_y <= panel_y + panel_height)

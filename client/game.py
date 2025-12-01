@@ -39,6 +39,7 @@ class Game:
         self.connecting = False
         self.selected_entity_type = None
         self.selected_direction = 0
+        self.inspected_entity = None  # Entité actuellement inspectée
 
         # Debug
         self.show_debug = True
@@ -148,14 +149,14 @@ class Game:
         self.velocity_y = vy
 
     def build_at_cursor(self):
+        import math
+
         if not self.connected or self.selected_entity_type is None:
             return
 
-        # Convertit position souris en coordonnées monde
         mouse_x, mouse_y = pygame.mouse.get_pos()
         world_x, world_y = self.renderer.screen_to_world(mouse_x, mouse_y)
 
-        # Arrondit à la tile
         tile_x = math.floor(world_x)
         tile_y = math.floor(world_y)
 
@@ -163,14 +164,16 @@ class Game:
             self.network.send_build(tile_x, tile_y, self.selected_entity_type, self.selected_direction)
 
     def destroy_at_cursor(self):
+        import math
+
         if not self.connected:
             return
 
         mouse_x, mouse_y = pygame.mouse.get_pos()
         world_x, world_y = self.renderer.screen_to_world(mouse_x, mouse_y)
 
-        tile_x = int(world_x)
-        tile_y = int(world_y)
+        tile_x = math.floor(world_x)
+        tile_y = math.floor(world_y)
 
         # Trouve l'entité à cette position
         entity = self.world_view.get_entity_at(tile_x, tile_y)
@@ -183,3 +186,27 @@ class Game:
     def cleanup(self):
         if self.network:
             self.network.disconnect()
+
+    def inspect_at_cursor(self):
+        """Inspecte l'entité sous le curseur."""
+        import math
+
+        if not self.connected:
+            return False
+
+        mouse_x, mouse_y = pygame.mouse.get_pos()
+        world_x, world_y = self.renderer.screen_to_world(mouse_x, mouse_y)
+
+        tile_x = math.floor(world_x)
+        tile_y = math.floor(world_y)
+
+        entity = self.world_view.get_entity_at(tile_x, tile_y)
+        if entity:
+            self.inspected_entity = entity
+            return True
+
+        return False
+
+    def close_inspection(self):
+        """Ferme l'interface d'inspection."""
+        self.inspected_entity = None
