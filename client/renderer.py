@@ -1,11 +1,11 @@
-import math
-
 import pygame
+import math
 from typing import TYPE_CHECKING, Tuple
 
 from shared.constants import TILE_SIZE, CHUNK_SIZE
 from shared.tiles import TileType
 from shared.entities import EntityType, Direction
+from admin.config import get_config
 
 if TYPE_CHECKING:
     from client.game import Game
@@ -13,29 +13,6 @@ if TYPE_CHECKING:
 
 
 class Renderer:
-    # Couleurs des tiles
-    TILE_COLORS = {
-        TileType.VOID: (20, 20, 30),
-        TileType.GRASS: (34, 139, 34),
-        TileType.DIRT: (139, 90, 43),
-        TileType.STONE: (128, 128, 128),
-        TileType.WATER: (30, 144, 255),
-        TileType.IRON_ORE: (160, 160, 180),
-        TileType.COPPER_ORE: (184, 115, 51),
-        TileType.COAL: (40, 40, 40),
-    }
-
-    # Couleurs des entités
-    ENTITY_COLORS = {
-        EntityType.PLAYER: (255, 255, 255),
-        EntityType.CONVEYOR: (255, 200, 0),
-        EntityType.MINER: (200, 100, 50),
-        EntityType.FURNACE: (255, 100, 0),
-        EntityType.ASSEMBLER: (100, 100, 200),
-        EntityType.CHEST: (139, 90, 43),
-        EntityType.INSERTER: (150, 150, 150),
-    }
-
     def __init__(self, screen: pygame.Surface, world_view: 'WorldView'):
         self.screen = screen
         self.world_view = world_view
@@ -53,8 +30,17 @@ class Renderer:
         self._cached_tile_size = 32
         self._chunks_rebuilt_this_frame = 0
 
+        # Cache zoom
+        self._scaled_cache = {}
+        self._scaled_tile_size = 32
+
         # Minimap
         self.minimap_zoom_level = 1
+
+        # Charge les couleurs depuis la config
+        config = get_config()
+        self.TILE_COLORS = config.tile_colors
+        self.ENTITY_COLORS = config.entity_colors
 
     def world_to_screen(self, world_x: float, world_y: float) -> Tuple[int, int]:
         """Convertit coordonnées monde en coordonnées écran (2D standard)."""
@@ -74,16 +60,14 @@ class Renderer:
         rel_x = screen_x - self.screen.get_width() // 2
         rel_y = screen_y - self.screen.get_height() // 2
 
-        world_x = rel_x / self.tile_size + self.world_view.camera_x
-        world_y = rel_y / self.tile_size + self.world_view.camera_y
-
-        world_x += 0.5
-        world_y += 0.5
+        world_x = rel_x / self.tile_size + self.world_view.camera_x + 0.5
+        world_y = rel_y / self.tile_size + self.world_view.camera_y + 0.5
 
         return world_x, world_y
 
     def render(self, game: 'Game'):
         self._chunks_rebuilt_this_frame = 0
+
         self.screen.fill((20, 20, 30))
         self.render_world(game)
         self.render_entities(game)
@@ -92,21 +76,13 @@ class Renderer:
         self.render_minimap(game)
         self.render_ui(game)
 
-        if game.show_debug:
-            self.render_debug(game)
-
         if game.inspected_entity:
             self.render_inspection_panel(game)
 
-        pygame.display.flip()
+        if game.show_debug:
+            self.render_debug(game)
 
-    def invalidate_chunk_cache(self):
-        """Invalide le cache des chunks."""
-        # Sauvegarde l'ancien cache et tile_size
-        self._old_chunk_surfaces = self._chunk_surfaces.copy()
-        self._old_tile_size = getattr(self, '_cached_tile_size', self.tile_size)
-        self._cached_tile_size = self.tile_size
-        self._chunk_surfaces = {}
+        pygame.display.flip()
 
     def render_world(self, game: 'Game'):
         """Rendu des chunks (optimisé avec cache)."""
@@ -122,14 +98,7 @@ class Renderer:
         min_cy = int((cam_y - half_h / self.tile_size) // 32) - 1
         max_cy = int((cam_y + half_h / self.tile_size) // 32) + 1
 
-        target_chunk_size = 32 * self.tile_size
-
-        # Cache des surfaces scalées pour ce tile_size
-        if not hasattr(self, '_scaled_cache'):
-            self._scaled_cache = {}
-            self._scaled_tile_size = self.tile_size
-
-        # Invalide le cache scalé si tile_size a changé
+        # Invalide le cache scalé si zoom changé
         if self._scaled_tile_size != self.tile_size:
             self._scaled_cache.clear()
             self._scaled_tile_size = self.tile_size
@@ -144,14 +113,18 @@ class Renderer:
                     screen_x -= self.tile_size // 2
                     screen_y -= self.tile_size // 2
 
-                    # Scale avec cache
+                    # Scale avec cache si nécessaire
                     if self.tile_size != 32:
                         if (cx, cy) not in self._scaled_cache:
-                            self._scaled_cache[(cx, cy)] = pygame.transform.scale(surface, (target_chunk_size,
-                                                                                            target_chunk_size))
+                            target_size = 32 * self.tile_size
+                            self._scaled_cache[(cx, cy)] = pygame.transform.scale(surface, (target_size, target_size))
                         surface = self._scaled_cache[(cx, cy)]
 
                     self.screen.blit(surface, (screen_x, screen_y))
+
+    def invalidate_chunk_cache(self):
+        """Invalide le cache des chunks."""
+        self._chunk_surfaces.clear()
 
     def get_chunk_surface(self, cx: int, cy: int) -> pygame.Surface:
         """Retourne une surface cachée pour le chunk (toujours à tile_size=32)."""
@@ -169,10 +142,12 @@ class Renderer:
                 for tx in range(32):
                     tile_type = chunk['tiles'][ty][tx]
                     if tile_type != TileType.VOID:
-                        color = self.TILE_COLORS.get(TileType(tile_type), (100, 100, 100))
+                        color = self.TILE_COLORS.get(tile_type, (100, 100, 100))
                         x = tx * base_tile_size
                         y = ty * base_tile_size
+
                         surface.fill(color, (x, y, base_tile_size, base_tile_size))
+
                         darker = tuple(max(0, c - 30) for c in color)
                         pygame.draw.rect(surface, darker, (x, y, base_tile_size, base_tile_size), 1)
 
@@ -195,13 +170,14 @@ class Renderer:
                 continue
 
             entity_type = EntityType(entity['type'])
-            color = self.ENTITY_COLORS.get(entity_type, (200, 200, 200))
+            color = self.ENTITY_COLORS.get(int(entity_type), (200, 200, 200))
 
             # Dessine l'entité
             self.draw_entity(screen_x, screen_y, color, entity)
 
     def draw_entity(self, x: int, y: int, color: Tuple[int, int, int], entity: dict):
         """Dessine une entité."""
+        config = get_config()
         size = self.tile_size // 3
 
         # Rectangle simple pour l'instant
@@ -231,11 +207,9 @@ class Renderer:
 
             for item in items:
                 progress = item.get('progress', 0)
-                # Position de l'item sur le convoyeur
                 item_x = x + int((progress - 0.5) * self.tile_size * dx)
                 item_y = y + int((progress - 0.5) * self.tile_size * dy)
 
-                # Couleur selon le type d'item
                 item_color = self.get_item_color(item.get('item', ''))
                 pygame.draw.circle(self.screen, item_color, (item_x, item_y), 4)
                 pygame.draw.circle(self.screen, (255, 255, 255), (item_x, item_y), 4, 1)
@@ -256,8 +230,8 @@ class Renderer:
                 count_text = self.small_font.render(text, True, (255, 200, 0))
                 self.screen.blit(count_text, (x + size // 2, y - size // 2 - 5))
 
+        # Affiche l'item porté par l'inserter
         if entity_type == EntityType.INSERTER:
-            data = entity.get('data', {})
             held_item = data.get('held_item', None)
 
             if held_item:
@@ -265,12 +239,10 @@ class Renderer:
                 direction = Direction(entity.get('dir', 0))
                 dx, dy = self.direction_to_delta(direction)
 
-                # Position de l'item : de -0.5 tile (source) à +0.5 tile (dest)
-                offset = progress - 0.5  # -0.5 à 0.5
+                offset = progress - 0.5
                 item_x = x + int(offset * self.tile_size * dx)
                 item_y = y + int(offset * self.tile_size * dy)
 
-                # Dessine l'item
                 item_color = self.get_item_color(held_item.get('item', ''))
                 pygame.draw.circle(self.screen, item_color, (item_x, item_y), 5)
                 pygame.draw.circle(self.screen, (255, 255, 255), (item_x, item_y), 5, 1)
@@ -287,14 +259,8 @@ class Renderer:
 
     def get_item_color(self, item_name: str) -> Tuple[int, int, int]:
         """Retourne la couleur d'un item."""
-        colors = {
-            'iron_ore': (160, 160, 180),
-            'copper_ore': (184, 115, 51),
-            'coal': (40, 40, 40),
-            'iron_plate': (200, 200, 210),
-            'copper_plate': (210, 140, 80),
-        }
-        return colors.get(item_name, (150, 150, 150))
+        config = get_config()
+        return config.get_item_color(item_name)
 
     def draw_direction_arrow(self, x: int, y: int, direction: Direction):
         """Dessine une flèche de direction."""
@@ -310,22 +276,16 @@ class Renderer:
 
     def render_players(self, game: 'Game'):
         """Rendu des joueurs."""
-        # Debug
-        #print(f"Mon ID: {game.player_id}, Autres joueurs: {list(self.world_view.other_players.keys())}")
-
         # Autres joueurs
         for player in self.world_view.other_players.values():
-            # Ne pas afficher le joueur local
             if player['id'] == game.player_id:
                 continue
 
             screen_x, screen_y = self.world_to_screen(player['x'], player['y'])
 
-            # Corps
             pygame.draw.circle(self.screen, (100, 100, 255), (screen_x, screen_y - 10), 12)
             pygame.draw.circle(self.screen, (255, 255, 255), (screen_x, screen_y - 10), 12, 2)
 
-            # Nom
             name_surface = self.small_font.render(player['name'], True, (255, 255, 255))
             name_rect = name_surface.get_rect(center=(screen_x, screen_y - 30))
             self.screen.blit(name_surface, name_rect)
@@ -343,8 +303,7 @@ class Renderer:
 
     def render_cursor(self, game: 'Game'):
         """Rendu du curseur de construction."""
-        import math
-        from shared.tiles import TileType
+        config = get_config()
 
         mouse_x, mouse_y = pygame.mouse.get_pos()
         world_x, world_y = self.screen_to_world(mouse_x, mouse_y)
@@ -359,35 +318,31 @@ class Renderer:
 
         if game.selected_entity_type is not None:
             # Vérifie si placement valide
-            tile = self.world_view.get_tile(tile_x, tile_y)
+            tile_id = self.world_view.get_tile(tile_x, tile_y)
             entity_at = self.world_view.get_entity_at(tile_x, tile_y)
 
-            valid = True
+            tile_config = config.tiles.get(tile_id)
+            tile_name = tile_config.name if tile_config else 'VOID'
 
-            # Pas sur l'eau
-            if tile == TileType.WATER:
-                valid = False
+            entity_config = config.entities.get(int(game.selected_entity_type))
+            entity_name = entity_config.name if entity_config else None
+
+            valid = True
 
             # Pas sur une entité existante
             if entity_at:
                 valid = False
 
-            # Foreuse uniquement sur minerai
-            if game.selected_entity_type == EntityType.MINER:
-                if tile not in (TileType.IRON_ORE, TileType.COPPER_ORE, TileType.COAL):
-                    valid = False
-
-            # Four uniquement sur herbe/terre
-            if game.selected_entity_type == EntityType.FURNACE:
-                if tile not in (TileType.GRASS, TileType.DIRT):
-                    valid = False
+            # Vérifie les règles de placement
+            if entity_name and not config.can_place_entity(entity_name, tile_name):
+                valid = False
 
             # Couleur selon validité
             cursor_color = (0, 255, 0) if valid else (255, 0, 0)
             pygame.draw.rect(self.screen, cursor_color, rect, 2)
 
             # Preview de l'entité
-            entity_color = self.ENTITY_COLORS.get(EntityType(game.selected_entity_type), (200, 200, 200))
+            entity_color = self.ENTITY_COLORS.get(int(game.selected_entity_type), (200, 200, 200))
             preview_color = tuple(c // 2 for c in entity_color)
             self.draw_entity(screen_x, screen_y, preview_color, {
                 'type': game.selected_entity_type,
@@ -398,38 +353,37 @@ class Renderer:
 
     def render_ui(self, game: 'Game'):
         """Rendu de l'interface utilisateur."""
-        # Barre d'outils en bas
+        config = get_config()
+
         toolbar_height = 80
         toolbar_y = self.screen.get_height() - toolbar_height
         pygame.draw.rect(self.screen, (40, 40, 50), (0, toolbar_y, self.screen.get_width(), toolbar_height))
 
-        # Boutons d'entités
+        # Boutons d'entités depuis la config
         entities = [
-            (EntityType.CONVEYOR, "Convoyeur", pygame.K_1),
-            (EntityType.MINER, "Foreuse", pygame.K_2),
-            (EntityType.FURNACE, "Four", pygame.K_3),
-            (EntityType.ASSEMBLER, "Assembleur", pygame.K_4),
-            (EntityType.CHEST, "Coffre", pygame.K_5),
-            (EntityType.INSERTER, "Inserter", pygame.K_6),
+            (EntityType.CONVEYOR, pygame.K_1),
+            (EntityType.MINER, pygame.K_2),
+            (EntityType.FURNACE, pygame.K_3),
+            (EntityType.ASSEMBLER, pygame.K_4),
+            (EntityType.CHEST, pygame.K_5),
+            (EntityType.INSERTER, pygame.K_6),
         ]
 
         x_offset = 20
-        for entity_type, name, key in entities:
-            color = self.ENTITY_COLORS.get(entity_type, (200, 200, 200))
+        for entity_type, key in entities:
+            entity_config = config.entities.get(int(entity_type))
+            color = entity_config.color if entity_config else (200, 200, 200)
+            name = entity_config.display_name if entity_config else "?"
 
-            # Sélectionné ?
             if game.selected_entity_type == entity_type:
                 pygame.draw.rect(self.screen, (100, 100, 100), (x_offset - 5, toolbar_y + 5, 50, 70))
 
-            # Bouton coloré
             pygame.draw.rect(self.screen, color, (x_offset, toolbar_y + 10, 40, 40))
 
-            # Raccourci clavier
             key_text = self.small_font.render(pygame.key.name(key).upper(), True, (200, 200, 200))
             key_rect = key_text.get_rect(center=(x_offset + 20, toolbar_y + 30))
             self.screen.blit(key_text, key_rect)
 
-            # Nom de l'entité
             name_text = self.small_font.render(name, True, (180, 180, 180))
             name_rect = name_text.get_rect(center=(x_offset + 20, toolbar_y + 60))
             self.screen.blit(name_text, name_rect)
@@ -450,12 +404,130 @@ class Renderer:
             surface = self.small_font.render(text, True, (150, 150, 150))
             self.screen.blit(surface, (x, toolbar_y + 5 + i * 12))
 
-    def render_loading(self, game: 'Game'):
-        """Écran de chargement."""
-        text = "Connexion..." if game.connecting else "Déconnecté"
-        surface = self.font.render(text, True, (255, 255, 255))
-        rect = surface.get_rect(center=(self.screen.get_width() // 2, self.screen.get_height() // 2))
-        self.screen.blit(surface, rect)
+    def render_inspection_panel(self, game: 'Game'):
+        """Affiche le panneau d'inspection d'une entité."""
+        config = get_config()
+        entity = game.inspected_entity
+        if not entity:
+            return
+
+        screen_w = self.screen.get_width()
+        screen_h = self.screen.get_height()
+
+        panel_width = 250
+        panel_height = 300
+        panel_x = screen_w - panel_width - 20
+        panel_y = (screen_h - panel_height) // 2
+
+        panel_rect = pygame.Rect(panel_x, panel_y, panel_width, panel_height)
+        pygame.draw.rect(self.screen, (30, 30, 40), panel_rect)
+        pygame.draw.rect(self.screen, (100, 100, 120), panel_rect, 2)
+
+        entity_type = EntityType(entity['type'])
+        title = config.get_entity_display_name(int(entity_type))
+        title_surface = self.font.render(title, True, (255, 255, 255))
+        self.screen.blit(title_surface, (panel_x + 10, panel_y + 10))
+
+        pygame.draw.line(self.screen, (100, 100, 120),
+                         (panel_x + 10, panel_y + 40),
+                         (panel_x + panel_width - 10, panel_y + 40))
+
+        y_offset = panel_y + 50
+        data = entity.get('data', {})
+
+        if entity_type == EntityType.MINER:
+            output = data.get('output', [])
+            self.render_item_list("Buffer sortie", output, panel_x + 10, y_offset, panel_width - 20)
+
+        elif entity_type == EntityType.FURNACE:
+            input_items = data.get('input', [])
+            output_items = data.get('output', [])
+            y_offset = self.render_item_list("Entrée", input_items, panel_x + 10, y_offset, panel_width - 20)
+            y_offset += 10
+            self.render_item_list("Sortie", output_items, panel_x + 10, y_offset, panel_width - 20)
+
+        elif entity_type == EntityType.CHEST:
+            items = data.get('items', [])
+            self.render_item_list("Contenu", items, panel_x + 10, y_offset, panel_width - 20)
+
+        elif entity_type == EntityType.CONVEYOR:
+            items = data.get('items', [])
+            self.render_item_list("Items", items, panel_x + 10, y_offset, panel_width - 20)
+
+        elif entity_type == EntityType.ASSEMBLER:
+            input_items = data.get('input', [])
+            output_items = data.get('output', [])
+            selected_recipe = data.get('recipe', None)
+
+            recipe_text = selected_recipe if selected_recipe else "(aucune recette)"
+            recipe_label = self.small_font.render(f"Recette: {recipe_text}", True, (200, 200, 100))
+            self.screen.blit(recipe_label, (panel_x + 10, y_offset))
+            y_offset += 25
+
+            # Boutons de recettes depuis la config
+            recipes = config.get_assembler_recipe_names()
+            for i, recipe in enumerate(recipes):
+                btn_x = panel_x + 10 + (i % 2) * 115
+                btn_y = y_offset + (i // 2) * 30
+                btn_rect = pygame.Rect(btn_x, btn_y, 110, 25)
+
+                if selected_recipe == recipe:
+                    btn_color = (80, 120, 80)
+                else:
+                    btn_color = (60, 60, 70)
+
+                pygame.draw.rect(self.screen, btn_color, btn_rect)
+                pygame.draw.rect(self.screen, (100, 100, 120), btn_rect, 1)
+
+                recipe_config = config.assembler_recipes.get(recipe)
+                recipe_name = recipe_config.display_name if recipe_config else recipe.replace('_', ' ').title()
+                text = self.small_font.render(recipe_name, True, (220, 220, 220))
+                text_rect = text.get_rect(center=btn_rect.center)
+                self.screen.blit(text, text_rect)
+
+                if not hasattr(self, '_recipe_buttons'):
+                    self._recipe_buttons = {}
+                self._recipe_buttons[recipe] = btn_rect
+
+            y_offset += ((len(recipes) + 1) // 2) * 30 + 10
+
+            y_offset = self.render_item_list("Entrée", input_items, panel_x + 10, y_offset, panel_width - 20)
+            y_offset += 10
+            self.render_item_list("Sortie", output_items, panel_x + 10, y_offset, panel_width - 20)
+
+        help_text = self.small_font.render("Échap ou clic droit pour fermer", True, (150, 150, 150))
+        self.screen.blit(help_text, (panel_x + 10, panel_y + panel_height - 25))
+
+    def render_item_list(self, title: str, items: list, x: int, y: int, width: int) -> int:
+        """Affiche une liste d'items groupés par type. Retourne la position Y finale."""
+        title_surface = self.small_font.render(f"{title}:", True, (200, 200, 200))
+        self.screen.blit(title_surface, (x, y))
+        y += 20
+
+        if not items:
+            empty_text = self.small_font.render("(vide)", True, (100, 100, 100))
+            self.screen.blit(empty_text, (x + 10, y))
+            return y + 20
+
+        item_counts = {}
+        for item in items:
+            item_name = item.get('item', 'inconnu')
+            item_counts[item_name] = item_counts.get(item_name, 0) + 1
+
+        for item_name, count in item_counts.items():
+            color = self.get_item_color(item_name)
+
+            pygame.draw.rect(self.screen, color, (x + 10, y + 2, 12, 12))
+            pygame.draw.rect(self.screen, (255, 255, 255), (x + 10, y + 2, 12, 12), 1)
+
+            display_name = item_name.replace('_', ' ').title()
+            text = f"{display_name}: {count}"
+            text_surface = self.small_font.render(text, True, (220, 220, 220))
+            self.screen.blit(text_surface, (x + 28, y))
+
+            y += 18
+
+        return y
 
     def render_minimap(self, game: 'Game'):
         """Rendu de la mini-carte en haut à droite (optimisé)."""
@@ -467,14 +539,10 @@ class Renderer:
         minimap_x = screen_w - minimap_size - margin
         minimap_y = margin
 
-        if not hasattr(self, 'minimap_zoom_level'):
-            self.minimap_zoom_level = 1
         zoom_levels = [32, 64, 128, 256]
         tiles_range = zoom_levels[self.minimap_zoom_level]
 
-        # Échantillonnage pour les grands zooms
         sample_step = max(1, tiles_range // 64)
-
         tile_pixel = minimap_size / tiles_range * sample_step
 
         center_x = game.player_x
@@ -515,7 +583,6 @@ class Renderer:
 
         self.screen.blit(self._minimap_cache, (minimap_x, minimap_y))
 
-        # Joueurs
         center_px = minimap_x + minimap_size // 2
         center_py = minimap_y + minimap_size // 2
         tile_scale = minimap_size / tiles_range
@@ -542,7 +609,6 @@ class Renderer:
             f"Entities: {len(self.world_view.entities)}",
             f"Players: {len(self.world_view.other_players) + 1}",
             f"Bandwidth: {game.bandwidth} B/s",
-            f"Tiles in minimap: {len(self.world_view.chunks) * 32 * 32}"
         ]
 
         y = 10
@@ -550,154 +616,3 @@ class Renderer:
             surface = self.small_font.render(line, True, (200, 200, 200))
             self.screen.blit(surface, (10, y))
             y += 18
-
-    def render_inspection_panel(self, game: 'Game'):
-        """Affiche le panneau d'inspection d'une entité."""
-        entity = game.inspected_entity
-
-        if not entity:
-            return
-
-        screen_w = self.screen.get_width()
-        screen_h = self.screen.get_height()
-
-        # Dimensions du panneau
-        panel_width = 250
-        panel_height = 300
-        panel_x = screen_w - panel_width - 20
-        panel_y = (screen_h - panel_height) // 2
-
-        # Fond du panneau
-        panel_rect = pygame.Rect(panel_x, panel_y, panel_width, panel_height)
-        pygame.draw.rect(self.screen, (30, 30, 40), panel_rect)
-        pygame.draw.rect(self.screen, (100, 100, 120), panel_rect, 2)
-
-        # Titre
-        entity_type = EntityType(entity['type'])
-
-        names = {
-            EntityType.MINER: "Foreuse",
-            EntityType.FURNACE: "Four",
-            EntityType.CHEST: "Coffre",
-            EntityType.ASSEMBLER: "Assembleur",
-            EntityType.CONVEYOR: "Convoyeur",
-            EntityType.INSERTER: "Inserter",
-        }
-
-        title = names.get(entity_type, "Entité")
-        title_surface = self.font.render(title, True, (255, 255, 255))
-        self.screen.blit(title_surface, (panel_x + 10, panel_y + 10))
-
-        # Ligne de séparation
-        pygame.draw.line(self.screen, (100, 100, 120),
-                         (panel_x + 10, panel_y + 40),
-                         (panel_x + panel_width - 10, panel_y + 40))
-
-        y_offset = panel_y + 50
-        data = entity.get('data', {})
-
-        # Affiche selon le type
-        if entity_type == EntityType.MINER:
-            output = data.get('output', [])
-            self.render_item_list("Buffer sortie", output, panel_x + 10, y_offset, panel_width - 20)
-
-        elif entity_type == EntityType.FURNACE:
-            input_items = data.get('input', [])
-            output_items = data.get('output', [])
-            y_offset = self.render_item_list("Entrée", input_items, panel_x + 10, y_offset, panel_width - 20)
-            y_offset += 10
-            self.render_item_list("Sortie", output_items, panel_x + 10, y_offset, panel_width - 20)
-
-        elif entity_type == EntityType.CHEST:
-            items = data.get('items', [])
-            self.render_item_list("Contenu", items, panel_x + 10, y_offset, panel_width - 20)
-
-        elif entity_type == EntityType.CONVEYOR:
-            items = data.get('items', [])
-            self.render_item_list("Items", items, panel_x + 10, y_offset, panel_width - 20)
-
-        elif entity_type == EntityType.ASSEMBLER:
-            input_items = data.get('input', [])
-            output_items = data.get('output', [])
-            selected_recipe = data.get('recipe', None)
-
-            # Affiche la recette sélectionnée
-            recipe_text = selected_recipe if selected_recipe else "(aucune recette)"
-            recipe_label = self.small_font.render(f"Recette: {recipe_text}", True, (200, 200, 100))
-            self.screen.blit(recipe_label, (panel_x + 10, y_offset))
-            y_offset += 25
-
-            # Boutons de recettes
-            recipes = ['iron_gear', 'copper_wire', 'circuit', 'automation_science']
-
-            for i, recipe in enumerate(recipes):
-                btn_x = panel_x + 10 + (i % 2) * 115
-                btn_y = y_offset + (i // 2) * 30
-                btn_rect = pygame.Rect(btn_x, btn_y, 110, 25)
-
-                # Couleur du bouton
-                if selected_recipe == recipe:
-                    btn_color = (80, 120, 80)
-                else:
-                    btn_color = (60, 60, 70)
-
-                pygame.draw.rect(self.screen, btn_color, btn_rect)
-                pygame.draw.rect(self.screen, (100, 100, 120), btn_rect, 1)
-
-                # Nom de la recette
-                recipe_name = recipe.replace('_', ' ').title()
-                text = self.small_font.render(recipe_name, True, (220, 220, 220))
-                text_rect = text.get_rect(center=btn_rect.center)
-                self.screen.blit(text, text_rect)
-
-                # Stocke le rect pour la détection de clic
-                if not hasattr(self, '_recipe_buttons'):
-                    self._recipe_buttons = {}
-
-                self._recipe_buttons[recipe] = btn_rect
-
-            y_offset += 70
-            y_offset = self.render_item_list("Entrée", input_items, panel_x + 10, y_offset, panel_width - 20)
-            y_offset += 10
-
-            self.render_item_list("Sortie", output_items, panel_x + 10, y_offset, panel_width - 20)
-
-        # Instructions
-        help_text = self.small_font.render("Échap ou clic droit pour fermer", True, (150, 150, 150))
-        self.screen.blit(help_text, (panel_x + 10, panel_y + panel_height - 25))
-
-    def render_item_list(self, title: str, items: list, x: int, y: int, width: int) -> int:
-        """Affiche une liste d'items groupés par type. Retourne la position Y finale."""
-        # Titre de la section
-        title_surface = self.small_font.render(f"{title}:", True, (200, 200, 200))
-        self.screen.blit(title_surface, (x, y))
-        y += 20
-
-        if not items:
-            empty_text = self.small_font.render("(vide)", True, (100, 100, 100))
-            self.screen.blit(empty_text, (x + 10, y))
-            return y + 20
-
-        # Groupe les items par type
-        item_counts = {}
-        for item in items:
-            item_name = item.get('item', 'inconnu')
-            item_counts[item_name] = item_counts.get(item_name, 0) + 1
-
-        # Affiche chaque type
-        for item_name, count in item_counts.items():
-            color = self.get_item_color(item_name)
-
-            # Petit carré de couleur
-            pygame.draw.rect(self.screen, color, (x + 10, y + 2, 12, 12))
-            pygame.draw.rect(self.screen, (255, 255, 255), (x + 10, y + 2, 12, 12), 1)
-
-            # Nom et quantité
-            display_name = item_name.replace('_', ' ').title()
-            text = f"{display_name}: {count}"
-            text_surface = self.small_font.render(text, True, (220, 220, 220))
-            self.screen.blit(text_surface, (x + 28, y))
-
-            y += 18
-
-        return y

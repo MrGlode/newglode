@@ -9,13 +9,15 @@ from shared.protocol import (
     MSG_AUTH, MSG_AUTH_RESPONSE, MSG_PLAYER_JOIN, MSG_PLAYER_LEAVE,
     MSG_PLAYER_MOVE, MSG_CHUNK_REQUEST, MSG_CHUNK_DATA,
     MSG_ENTITY_UPDATE, MSG_ENTITY_ADD, MSG_ENTITY_REMOVE,
-    MSG_PLAYER_ACTION, MSG_WORLD_TICK, MSG_SYNC, ACTION_CONFIGURE
+    MSG_PLAYER_ACTION, MSG_WORLD_TICK, MSG_SYNC,
+    ACTION_BUILD, ACTION_DESTROY, ACTION_CONFIGURE
 )
 from shared.constants import (
     WORLD_TICK_RATE, WORLD_TICK_INTERVAL,
     NETWORK_TICK_RATE, NETWORK_TICK_INTERVAL,
     PLAYER_VIEW_DISTANCE
 )
+from shared.entities import EntityType, Direction
 from server.world import World
 from server.simulation import Simulation
 from server.persistence import Persistence
@@ -33,6 +35,9 @@ class ClientConnection:
 
 class GameServer:
     def __init__(self, host='0.0.0.0', port=5555):
+        # Charge la configuration depuis MongoDB
+        self._load_config()
+
         self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
@@ -49,6 +54,18 @@ class GameServer:
         self.simulation = Simulation(self.world)
 
         self.running = True
+
+    def _load_config(self):
+        """Charge la configuration depuis MongoDB ou utilise les valeurs par défaut."""
+        from admin.config import get_config
+
+        config = get_config()
+        try:
+            config.load_from_mongodb()
+            print("Configuration chargée depuis MongoDB")
+        except Exception as e:
+            print(f"MongoDB non disponible ({e}), utilisation des valeurs par défaut")
+            config.load_defaults()
 
     def load_or_create_world(self) -> World:
         meta = self.persistence.load_world_meta()
@@ -116,8 +133,6 @@ class GameServer:
 
         if not client:
             return
-
-        print(f"Message de client {client_id}: type={msg_type}")  # Debug
 
         try:
             if msg_type == MSG_AUTH:
@@ -228,10 +243,9 @@ class GameServer:
                 client.subscribed_chunks.add((cx, cy))
 
     def handle_player_action(self, client_id: int, data: dict):
-        from shared.protocol import ACTION_BUILD, ACTION_DESTROY
-        from shared.entities import EntityType, Direction
-        from shared.tiles import TileType
+        from admin.config import get_config
 
+        config = get_config()
         action = data['action']
         x = data['x']
         y = data['y']
@@ -242,23 +256,18 @@ class GameServer:
 
             # Vérifie la tile
             tile = self.world.get_tile(x, y)
+            tile_id = int(tile)
 
-            # Pas de construction sur l'eau
-            if tile == TileType.WATER:
+            # Récupère le nom de la tile et de l'entité
+            tile_config = config.tiles.get(tile_id)
+            tile_name = tile_config.name if tile_config else 'VOID'
+
+            entity_config = config.entities.get(int(entity_type))
+            entity_name = entity_config.name if entity_config else None
+
+            # Vérifie les règles de placement
+            if entity_name and not config.can_place_entity(entity_name, tile_name):
                 return
-
-            # Foreuses uniquement sur minerai
-            if entity_type == EntityType.MINER:
-                if tile not in (TileType.IRON_ORE, TileType.COPPER_ORE, TileType.COAL):
-                    return
-
-            # Fours uniquement sur herbe ou terre
-            if entity_type == EntityType.FURNACE:
-                if tile not in (TileType.GRASS, TileType.DIRT):
-                    return
-
-            # Convoyeurs, assemblers, chests, inserters sur tout sauf eau
-            # (déjà géré par le check plus haut)
 
             # Vérifie qu'il n'y a pas déjà une entité
             existing = self.world.get_entity_at(x, y)
@@ -375,7 +384,6 @@ class GameServer:
 
                 # Broadcast les entités modifiées
                 for entity in self.simulation.get_dirty_entities():
-                    print(f"Entity {entity.id} updated: output={entity.data.get('output', [])}")
                     cx, cy, _, _ = self.world.world_to_chunk(entity.x, entity.y)
                     self.broadcast_to_chunk_subscribers((cx, cy), MSG_ENTITY_UPDATE, entity.to_dict())
 
