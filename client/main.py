@@ -15,6 +15,7 @@ def main():
     audio = get_audio()
     audio.load_sounds()
     audio.generate_placeholder_sounds()
+    audio.start_ambient_music()  # Cherche automatiquement dans assets/sounds/
 
     screen = pygame.display.set_mode((1280, 720), pygame.RESIZABLE | pygame.HWSURFACE | pygame.DOUBLEBUF)
     pygame.display.set_caption("Factorio-like")

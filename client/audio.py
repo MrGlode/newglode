@@ -219,25 +219,36 @@ class AudioManager:
         if not self.enabled:
             return
 
+        # Cherche un fichier musique si non spécifié
+        if music_file is None:
+            # Cherche dans assets/sounds/
+            possible_files = [
+                "assets/sounds/ambient.mp3",
+                "assets/sounds/ambient.ogg",
+                "assets/sounds/music.mp3",
+                "assets/sounds/music.ogg",
+                "assets/music/ambient.mp3",
+                "assets/music/ambient.ogg",
+            ]
+            for f in possible_files:
+                if os.path.exists(f):
+                    music_file = f
+                    break
+
         if music_file and os.path.exists(music_file):
             try:
                 pygame.mixer.music.load(music_file)
-                pygame.mixer.music.set_volume(self.music_volume)
+                pygame.mixer.music.set_volume(self.music_volume * self.master_volume)
                 pygame.mixer.music.play(-1)  # Boucle infinie
                 print(f"Musique d'ambiance: {music_file}")
             except Exception as e:
                 print(f"Erreur musique: {e}")
         else:
-            # Pas de fichier, on génère une ambiance simple
-            self._start_generated_ambient()
+            if music_file:
+                print(f"Fichier musique non trouvé: {music_file}")
 
-    def _start_generated_ambient(self):
-        """Génère une ambiance sonore simple."""
-        # L'ambiance sera gérée par update_machine_sounds
-        pass
-
-    def stop_music(self):
-        """Arrête la musique."""
+    def stop_ambient_music(self):
+        """Arrête la musique d'ambiance."""
         if self.enabled:
             pygame.mixer.music.stop()
 
@@ -245,7 +256,7 @@ class AudioManager:
         """Change le volume de la musique (0.0 - 1.0)."""
         self.music_volume = max(0.0, min(1.0, volume))
         if self.enabled:
-            pygame.mixer.music.set_volume(self.music_volume)
+            pygame.mixer.music.set_volume(self.music_volume * self.master_volume)
 
     def set_sfx_volume(self, volume: float):
         """Change le volume des effets (0.0 - 1.0)."""
@@ -254,20 +265,21 @@ class AudioManager:
     def set_master_volume(self, volume: float):
         """Change le volume global (0.0 - 1.0)."""
         self.master_volume = max(0.0, min(1.0, volume))
-        # Met à jour le volume de tous les canaux en cours
-        for channel in self._playing_machines.values():
-            if channel.get_busy():
-                # Recalcule le volume sera fait au prochain update
-                pass
+        # Met à jour le volume de la musique
+        if self.enabled:
+            pygame.mixer.music.set_volume(self.music_volume * self.master_volume)
 
     def toggle_audio(self):
         """Active/désactive l'audio."""
         self.enabled = not self.enabled
         if not self.enabled:
             pygame.mixer.stop()
-            pygame.mixer.music.stop()
+            pygame.mixer.music.pause()
             # Vide les références pour permettre le redémarrage au unmute
             self._playing_machines.clear()
+        else:
+            # Reprend la musique si elle était en cours
+            pygame.mixer.music.unpause()
         return self.enabled
 
     def update_machine_sounds(self, entities: dict, player_x: float, player_y: float, max_distance: float = 15.0):
