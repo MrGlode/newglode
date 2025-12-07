@@ -76,8 +76,14 @@ class Renderer:
         self.render_minimap(game)
         self.render_ui(game)
 
+        # Hotbar inventaire (toujours visible si inventaire fermé)
+        game.inventory_ui.render_hotbar(self.screen, game)
+
         if game.inspected_entity:
             self.render_inspection_panel(game)
+
+        # Inventaire complet (par-dessus tout)
+        game.inventory_ui.render(self.screen, game)
 
         if game.show_debug:
             self.render_debug(game)
@@ -395,8 +401,9 @@ class Renderer:
             "ZQSD: Déplacer",
             "1-6: Sélectionner",
             "R: Tourner",
-            "Clic G: Construire",
-            "Clic D: Détruire",
+            "I/E: Inventaire",
+            "F: Ramasser",
+            "Clic G/D: Actions",
             "F3: Debug",
         ]
         x = self.screen.get_width() - 130

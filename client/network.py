@@ -1,3 +1,8 @@
+"""
+Client réseau pour le jeu Factorio-like.
+Gère la connexion au serveur et l'envoi/réception de messages.
+"""
+
 import socket
 import time
 from typing import TYPE_CHECKING, Optional
@@ -8,7 +13,10 @@ from shared.protocol import (
     MSG_PLAYER_MOVE, MSG_CHUNK_REQUEST, MSG_CHUNK_DATA,
     MSG_ENTITY_UPDATE, MSG_ENTITY_ADD, MSG_ENTITY_REMOVE,
     MSG_PLAYER_ACTION, MSG_SYNC,
-    ACTION_BUILD, ACTION_DESTROY
+    MSG_INVENTORY_UPDATE, MSG_INVENTORY_ACTION,
+    ACTION_BUILD, ACTION_DESTROY, ACTION_CONFIGURE,
+    INV_ACTION_PICKUP, INV_ACTION_DROP, INV_ACTION_TRANSFER_TO,
+    INV_ACTION_TRANSFER_FROM, INV_ACTION_SWAP, INV_ACTION_CRAFT
 )
 
 if TYPE_CHECKING:
@@ -16,6 +24,8 @@ if TYPE_CHECKING:
 
 
 class NetworkClient:
+    """Client réseau pour communiquer avec le serveur."""
+
     def __init__(self, game: 'Game', host: str = 'localhost', port: int = 5555):
         self.game = game
         self.host = host
@@ -26,149 +36,156 @@ class NetworkClient:
 
         # Stats
         self.bytes_received = 0
-        self.last_bytes_check = time.perf_counter()
+        self.bytes_sent = 0
+        self.last_bandwidth_check = time.time()
         self.bandwidth = 0
 
-        # RTT
-        self.rtt = 0.0
-        self.last_sync = 0.0
-
     def connect(self):
-        try:
-            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            self.socket.connect((self.host, self.port))
-            self.socket.setblocking(False)
-            self.connected = True
-            print(f"Connecté à {self.host}:{self.port}")
-        except Exception as e:
-            print(f"Erreur connexion: {e}")
-            self.connected = False
-            raise
+        """Établit la connexion au serveur."""
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        self.socket.connect((self.host, self.port))
+        self.socket.setblocking(False)
+        self.connected = True
+        print(f"Connecté à {self.host}:{self.port}")
 
     def disconnect(self):
+        """Ferme la connexion."""
         if self.socket:
             try:
                 self.socket.close()
             except:
                 pass
         self.connected = False
-        print("Déconnexion du serveur")
         self.game.on_disconnected()
 
     def send(self, msg_type: int, data: dict):
-        if not self.connected:
+        """Envoie un message au serveur."""
+        if not self.connected or not self.socket:
             return
+
         try:
-            self.socket.send(pack_message(msg_type, data))
+            packed = pack_message(msg_type, data)
+            self.socket.send(packed)
+            self.bytes_sent += len(packed)
         except Exception as e:
             print(f"Erreur envoi: {e}")
             self.disconnect()
 
     def receive(self):
-        if not self.connected:
+        """Reçoit et traite les messages du serveur."""
+        if not self.connected or not self.socket:
             return
 
-        current_time = time.perf_counter()
-
-        # Bandwidth calc
-        if current_time - self.last_bytes_check >= 1.0:
-            self.bandwidth = self.bytes_received
-            self.bytes_received = 0
-            self.last_bytes_check = current_time
-
-        # Sync périodique
-        if current_time - self.last_sync > 1.0:
-            self.send(MSG_SYNC, {'client_time': get_timestamp()})
-            self.last_sync = current_time
-
         try:
-            data = self.socket.recv(8192)
+            data = self.socket.recv(65536)
             if not data:
-                print("Serveur a fermé la connexion")
                 self.disconnect()
                 return
 
-            self.bytes_received += len(data)
             self.buffer += data
+            self.bytes_received += len(data)
 
+            # Traite tous les messages complets
             while True:
                 msg, self.buffer = unpack_message(self.buffer)
                 if msg is None:
                     break
-                #print(f"Message reçu: type={msg['t']}")  # Debug
                 self.handle_message(msg)
 
+            # Calcul bandwidth
+            now = time.time()
+            if now - self.last_bandwidth_check >= 1.0:
+                self.bandwidth = self.bytes_received + self.bytes_sent
+                self.bytes_received = 0
+                self.bytes_sent = 0
+                self.last_bandwidth_check = now
+
         except BlockingIOError:
-            pass  # Normal, pas de données disponibles
-        except ConnectionResetError:
-            print("Connexion reset par le serveur")
-            self.disconnect()
+            pass
         except Exception as e:
-            print(f"Erreur réception: {type(e).__name__}: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"Erreur réception: {e}")
             self.disconnect()
 
     def handle_message(self, msg: dict):
+        """Traite un message reçu du serveur."""
         msg_type = msg['t']
         data = msg['d']
 
-        #print(f"Message reçu: type={msg_type}, data={data}")  # Debug
-
         if msg_type == MSG_AUTH_RESPONSE:
             if data['success']:
-                self.game.on_authenticated(data['player_id'], data['x'], data['y'])
+                self.game.on_authenticated(
+                    data['player_id'],
+                    data['x'],
+                    data['y']
+                )
             else:
-                print("Authentification échouée")
+                print("Échec authentification")
                 self.disconnect()
+
+        elif msg_type == MSG_PLAYER_JOIN:
+            self.game.world_view.add_player(data)
+
+        elif msg_type == MSG_PLAYER_LEAVE:
+            self.game.world_view.remove_player(data['id'])
+
+        elif msg_type == MSG_PLAYER_MOVE:
+            self.game.world_view.update_player(data)
 
         elif msg_type == MSG_CHUNK_DATA:
             self.game.world_view.add_chunk(data)
 
-        elif msg_type == MSG_PLAYER_JOIN:
-            #print(f"Joueur rejoint: {data}")  # Debug
-            self.game.world_view.add_player(data['id'], data['name'], data['x'], data['y'])
-
-        elif msg_type == MSG_PLAYER_LEAVE:
-            #print(f"Joueur parti: {data}")  # Debug
-            self.game.world_view.remove_player(data['id'])
-
-        elif msg_type == MSG_PLAYER_MOVE:
-            #print(f"Joueur bouge: {data}")  # Debug
-            self.game.world_view.move_player(data['id'], data['x'], data['y'])
+        elif msg_type == MSG_ENTITY_UPDATE:
+            self.game.world_view.update_entity(data)
+            # Met à jour l'entité inspectée si c'est la même
+            if self.game.inspected_entity and self.game.inspected_entity.get('id') == data.get('id'):
+                self.game.inspected_entity = data
 
         elif msg_type == MSG_ENTITY_ADD:
             self.game.world_view.add_entity(data)
 
         elif msg_type == MSG_ENTITY_REMOVE:
-            self.game.world_view.remove_entity(data['id'])
+            entity_id = data['id']
+            self.game.world_view.remove_entity(entity_id)
+            # Ferme l'inspection si l'entité inspectée est supprimée
+            if self.game.inspected_entity and self.game.inspected_entity.get('id') == entity_id:
+                self.game.inspected_entity = None
 
-        elif msg_type == MSG_ENTITY_UPDATE:
-            self.game.world_view.update_entity(data['id'], data)
+        elif msg_type == MSG_INVENTORY_UPDATE:
+            self.game.on_inventory_update(data)
 
         elif msg_type == MSG_SYNC:
-            self.rtt = get_timestamp() - data['client_time']
+            # Synchronisation temps (pour l'instant on ignore)
+            pass
+
+    # ============================================
+    # MÉTHODES D'ENVOI
+    # ============================================
 
     def authenticate(self, name: str):
+        """Envoie une demande d'authentification."""
         self.send(MSG_AUTH, {'name': name})
 
     def send_move(self, x: float, y: float):
+        """Envoie la position du joueur."""
         self.send(MSG_PLAYER_MOVE, {'x': x, 'y': y})
 
     def request_chunk(self, cx: int, cy: int):
+        """Demande les données d'un chunk."""
         self.send(MSG_CHUNK_REQUEST, {'cx': cx, 'cy': cy})
 
-    def send_build(self, x: int, y: int, entity_type: int, direction: int):
+    def send_build(self, x: int, y: int, entity_type: int, direction: int = 0):
+        """Envoie une demande de construction."""
         self.send(MSG_PLAYER_ACTION, {
             'action': ACTION_BUILD,
             'x': x,
             'y': y,
-            'entity_type': entity_type,
+            'entity_type': int(entity_type),
             'direction': direction
         })
 
     def send_destroy(self, entity_id: int):
+        """Envoie une demande de destruction."""
         self.send(MSG_PLAYER_ACTION, {
             'action': ACTION_DESTROY,
             'entity_id': entity_id,
@@ -177,11 +194,73 @@ class NetworkClient:
         })
 
     def send_set_recipe(self, entity_id: int, recipe: str):
-        from shared.protocol import MSG_PLAYER_ACTION, ACTION_CONFIGURE
+        """Envoie une demande de configuration de recette."""
         self.send(MSG_PLAYER_ACTION, {
             'action': ACTION_CONFIGURE,
             'entity_id': entity_id,
             'recipe': recipe,
             'x': 0,
             'y': 0
+        })
+
+    # ============================================
+    # MÉTHODES INVENTAIRE
+    # ============================================
+
+    def send_inventory_pickup(self, x: int, y: int):
+        """Demande à ramasser les items à une position."""
+        self.send(MSG_INVENTORY_ACTION, {
+            'action': INV_ACTION_PICKUP,
+            'x': x,
+            'y': y
+        })
+
+    def send_inventory_mine(self, x: int, y: int):
+        """Mine manuellement une ressource."""
+        self.send(MSG_INVENTORY_ACTION, {
+            'action': INV_ACTION_PICKUP,
+            'x': x,
+            'y': y,
+            'mine': True
+        })
+
+    def send_inventory_drop(self, item: str, count: int):
+        """Demande à lâcher des items."""
+        self.send(MSG_INVENTORY_ACTION, {
+            'action': INV_ACTION_DROP,
+            'item': item,
+            'count': count
+        })
+
+    def send_inventory_transfer_to(self, entity_id: int, item: str, count: int):
+        """Transfère des items vers une entité."""
+        self.send(MSG_INVENTORY_ACTION, {
+            'action': INV_ACTION_TRANSFER_TO,
+            'entity_id': entity_id,
+            'item': item,
+            'count': count
+        })
+
+    def send_inventory_transfer_from(self, entity_id: int, item: str, count: int):
+        """Transfère des items depuis une entité."""
+        self.send(MSG_INVENTORY_ACTION, {
+            'action': INV_ACTION_TRANSFER_FROM,
+            'entity_id': entity_id,
+            'item': item,
+            'count': count
+        })
+
+    def send_inventory_swap(self, slot1: int, slot2: int):
+        """Échange deux slots de l'inventaire."""
+        self.send(MSG_INVENTORY_ACTION, {
+            'action': INV_ACTION_SWAP,
+            'slot1': slot1,
+            'slot2': slot2
+        })
+
+    def send_inventory_craft(self, recipe: str):
+        """Demande à fabriquer un item."""
+        self.send(MSG_INVENTORY_ACTION, {
+            'action': INV_ACTION_CRAFT,
+            'recipe': recipe
         })

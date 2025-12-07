@@ -58,7 +58,10 @@ class InputHandler:
             get_audio().play_ui_click()
 
         elif key == pygame.K_ESCAPE:
-            if self.game.inspected_entity:
+            if self.game.inventory_ui.visible:
+                self.game.inventory_ui.close()
+                get_audio().play_ui_click()
+            elif self.game.inspected_entity:
                 self.game.close_inspection()
             else:
                 self.game.selected_entity_type = None
@@ -68,6 +71,14 @@ class InputHandler:
             # Toggle audio
             enabled = get_audio().toggle_audio()
             print(f"Audio: {'activé' if enabled else 'désactivé'}")
+
+        elif key == pygame.K_i or key == pygame.K_e:
+            # Toggle inventaire
+            self.game.toggle_inventory()
+
+        elif key == pygame.K_f:
+            # Ramasser items proches
+            self.game.pickup_items()
 
         elif key == pygame.K_PLUS or key == pygame.K_KP_PLUS or key == pygame.K_EQUALS:
             # Augmenter volume
@@ -113,6 +124,16 @@ class InputHandler:
         pass
 
     def handle_mousedown(self, button: int):
+        # Vérifie d'abord si l'inventaire est ouvert et consomme le clic
+        if self.game.inventory_ui.visible:
+            mouse_pos = pygame.mouse.get_pos()
+            if self.game.inventory_ui.handle_click(mouse_pos, button, self.game):
+                return
+            # Clic en dehors du panneau = ferme l'inventaire
+            if button == 1 or button == 3:
+                self.game.inventory_ui.close()
+                return
+
         if button == 1:  # Clic gauche
             # Vérifie si on clique sur un bouton de recette
             if self.game.inspected_entity:

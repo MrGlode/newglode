@@ -10,6 +10,7 @@ from client.renderer import Renderer
 from client.input_handler import InputHandler
 from client.world_view import WorldView
 from client.audio import get_audio
+from client.inventory import InventoryUI
 from shared.constants import WORLD_TICK_INTERVAL
 
 
@@ -24,6 +25,7 @@ class Game:
         self.world_view = WorldView()
         self.renderer = Renderer(screen, self.world_view)
         self.input_handler = InputHandler(self)
+        self.inventory_ui = InventoryUI()
 
         # État joueur
         self.player_id: Optional[int] = None
@@ -73,6 +75,11 @@ class Game:
         self.connecting = False
         self.player_id = None
         print("Déconnecté du serveur")
+
+    def on_inventory_update(self, data: dict):
+        """Reçoit la mise à jour de l'inventaire depuis le serveur."""
+        slots = data.get('slots', [])
+        self.inventory_ui.update_slots(slots)
 
     def run(self):
         last_time = time.perf_counter()
@@ -213,6 +220,30 @@ class Game:
     def rotate_selection(self):
         self.selected_direction = (self.selected_direction + 1) % 4
         get_audio().play_ui_click()
+
+    def toggle_inventory(self):
+        """Ouvre/ferme l'inventaire."""
+        self.inventory_ui.toggle()
+        get_audio().play_ui_click()
+
+    def pickup_items(self):
+        """Ramasse les items proches."""
+        if not self.connected or not self.network:
+            return
+
+        # Envoie la demande de ramassage au serveur
+        self.network.send_inventory_pickup(int(self.player_x), int(self.player_y))
+        get_audio().play_ui_click()
+
+    def transfer_to_entity(self, entity_id: int, item: str, count: int = 1):
+        """Transfère des items vers une entité."""
+        if self.network:
+            self.network.send_inventory_transfer_to(entity_id, item, count)
+
+    def transfer_from_entity(self, entity_id: int, item: str, count: int = 1):
+        """Transfère des items depuis une entité."""
+        if self.network:
+            self.network.send_inventory_transfer_from(entity_id, item, count)
 
     def cleanup(self):
         if self.network:
