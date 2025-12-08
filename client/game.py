@@ -1,6 +1,10 @@
+"""
+Logique principale du jeu Factorio-like.
+Gère l'état du joueur, la connexion réseau et la boucle de jeu.
+"""
+
 import random
 import math
-
 import pygame
 import time
 from typing import Optional
@@ -49,7 +53,12 @@ class Game:
         self.fps = 0
         self.bandwidth = 0
 
+        # Sync
+        self.last_move_sync = time.perf_counter()
+        self.last_position = (None, None)
+
     def connect(self, host: str = 'localhost', port: int = 5555, name: str = "Player"):
+        """Connecte au serveur."""
         self.player_name = name
         self.connecting = True
 
@@ -61,8 +70,10 @@ class Game:
             print(f"Erreur de connexion: {e}")
             self.connecting = False
             self.network = None
+            raise
 
     def on_authenticated(self, player_id: int, x: float, y: float):
+        """Callback appelé quand l'authentification réussit."""
         self.player_id = player_id
         self.player_x = x
         self.player_y = y
@@ -71,6 +82,7 @@ class Game:
         print(f"Connecté en tant que joueur {player_id} à ({x}, {y})")
 
     def on_disconnected(self):
+        """Callback appelé lors de la déconnexion."""
         self.connected = False
         self.connecting = False
         self.player_id = None
@@ -82,13 +94,10 @@ class Game:
         self.inventory_ui.update_slots(slots)
 
     def run(self):
+        """Boucle principale autonome (pour usage sans menus)."""
         last_time = time.perf_counter()
-        last_move_sync = time.perf_counter()
-        last_position = (None, None)
 
         name = 'TestPlayer' + str(random.randint(0, 10))
-
-        # Connexion automatique pour test
         self.connect('localhost', 5555, name)
 
         while self.running:
@@ -101,15 +110,7 @@ class Game:
 
             # Update
             if self.connected:
-                self.update(dt)
-
-                # Sync position avec le serveur (toutes les 50ms ou si changement)
-                current_pos = (round(self.player_x, 2), round(self.player_y, 2))
-                if current_time - last_move_sync > 0.05:  # 20 Hz
-                    if self.network and current_pos != last_position:
-                        self.network.send_move(self.player_x, self.player_y)
-                        last_position = current_pos
-                    last_move_sync = current_time
+                self.update_single(dt)
 
             # Network
             if self.network:
@@ -119,12 +120,28 @@ class Game:
             # Render
             self.renderer.render(self)
 
+            # Hotbar inventaire
+            self.inventory_ui.render_hotbar(self.screen, self)
+
+            if self.inspected_entity:
+                self.renderer.render_inspection_panel(self)
+
+            # Inventaire complet
+            self.inventory_ui.render(self.screen, self)
+
+            if self.show_debug:
+                self.renderer.render_debug(self)
+
+            pygame.display.flip()
+
             # FPS
-            self.fps = self.clock.get_fps()
             self.clock.tick(240)
 
-    def update(self, dt: float):
+    def update_single(self, dt: float):
+        """Met à jour le jeu pour un frame (appelé par main.py)."""
         from shared.constants import PLAYER_SPEED
+
+        current_time = time.perf_counter()
 
         # Mouvement joueur
         if self.velocity_x != 0 or self.velocity_y != 0:
@@ -144,6 +161,14 @@ class Game:
         # Interpole les autres joueurs
         self.world_view.update_players_interpolation(dt)
 
+        # Sync position avec le serveur (toutes les 50ms ou si changement)
+        current_pos = (round(self.player_x, 2), round(self.player_y, 2))
+        if current_time - self.last_move_sync > 0.05:  # 20 Hz
+            if self.network and current_pos != self.last_position:
+                self.network.send_move(self.player_x, self.player_y)
+                self.last_position = current_pos
+            self.last_move_sync = current_time
+
         # Demande les chunks manquants
         if self.network:
             needed = self.world_view.get_visible_chunks(self.screen.get_width(), self.screen.get_height())
@@ -161,6 +186,7 @@ class Game:
         )
 
     def set_velocity(self, vx: float, vy: float):
+        """Définit la vélocité du joueur."""
         self.velocity_x = vx
         self.velocity_y = vy
 
@@ -189,6 +215,7 @@ class Game:
         get_audio().play_ui_click()
 
     def build_at_cursor(self):
+        """Construit une entité à la position du curseur."""
         if not self.connected or self.selected_entity_type is None:
             return
 
@@ -203,6 +230,7 @@ class Game:
             get_audio().play_build()
 
     def destroy_at_cursor(self):
+        """Détruit l'entité à la position du curseur."""
         if not self.connected:
             return
 
@@ -218,6 +246,7 @@ class Game:
             get_audio().play_destroy()
 
     def rotate_selection(self):
+        """Tourne la sélection de 90 degrés."""
         self.selected_direction = (self.selected_direction + 1) % 4
         get_audio().play_ui_click()
 
@@ -231,7 +260,6 @@ class Game:
         if not self.connected or not self.network:
             return
 
-        # Envoie la demande de ramassage au serveur
         self.network.send_inventory_pickup(int(self.player_x), int(self.player_y))
         get_audio().play_ui_click()
 
@@ -246,5 +274,6 @@ class Game:
             self.network.send_inventory_transfer_from(entity_id, item, count)
 
     def cleanup(self):
+        """Nettoie les ressources."""
         if self.network:
             self.network.disconnect()

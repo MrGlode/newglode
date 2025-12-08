@@ -32,6 +32,26 @@ class InputHandler:
         # Mouvement continu
         self.update_movement()
 
+    def handle_event(self, event: pygame.event.Event):
+        """Gère un seul événement pygame."""
+        if event.type == pygame.QUIT:
+            self.game.running = False
+
+        elif event.type == pygame.KEYDOWN:
+            self.handle_keydown(event.key)
+
+        elif event.type == pygame.KEYUP:
+            self.handle_keyup(event.key)
+
+        elif event.type == pygame.MOUSEBUTTONDOWN:
+            self.handle_mousedown(event.button)
+
+        elif event.type == pygame.MOUSEWHEEL:
+            self.handle_mousewheel(event.y)
+
+        # Met à jour le mouvement
+        self.update_movement()
+
     def handle_keydown(self, key: int):
         # Sélection d'entité
         entity_keys = {
