@@ -19,8 +19,9 @@ class Chunk:
         if not self.tiles:
             self.tiles = [[TileType.VOID] * CHUNK_SIZE for _ in range(CHUNK_SIZE)]
 
+    """
     def generate(self, world_seed: int):
-        """Génère le terrain procédural pour ce chunk."""
+        ""Génère le terrain procédural pour ce chunk.""
         chunk_seed = hash((world_seed, self.cx, self.cy))
         rng = random.Random(chunk_seed)
 
@@ -42,6 +43,15 @@ class Chunk:
                     self.tiles[y][x] = TileType.GRASS
 
         self.dirty = True
+    """
+
+    def generate(self, world_seed: int):
+        from server.world_generator import get_world_generator
+
+        generator = get_world_generator(world_seed)
+        self.tiles = generator.generate_chunk_tiles(self.cx, self.cy)
+        self.dirty = True
+
 
     def get_tile(self, local_x: int, local_y: int) -> TileType:
         if 0 <= local_x < CHUNK_SIZE and 0 <= local_y < CHUNK_SIZE:
