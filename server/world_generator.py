@@ -222,7 +222,7 @@ class ResourcePatchGenerator:
         # Configuration des ressources - patches plus gros et cohérents
         self.resource_configs = {
             TileType.IRON_ORE: {
-                'frequency': 0.0005,
+                'frequency': 0.00006,  # était 0.00020
                 'min_radius': 8,
                 'max_radius': 20,
                 'min_richness': 0.6,
@@ -230,7 +230,7 @@ class ResourcePatchGenerator:
                 'noise_strength': 0.15,
             },
             TileType.COPPER_ORE: {
-                'frequency': 0.0004,
+                'frequency': 0.00005,  # était 0.00015
                 'min_radius': 8,
                 'max_radius': 18,
                 'min_richness': 0.5,
@@ -238,7 +238,7 @@ class ResourcePatchGenerator:
                 'noise_strength': 0.15,
             },
             TileType.COAL: {
-                'frequency': 0.00035,
+                'frequency': 0.00004,  # était 0.00012
                 'min_radius': 7,
                 'max_radius': 16,
                 'min_richness': 0.5,
@@ -246,7 +246,7 @@ class ResourcePatchGenerator:
                 'noise_strength': 0.12,
             },
             TileType.GOLD_ORE: {
-                'frequency': 0.00015,
+                'frequency': 0.000015,  # était 0.00005
                 'min_radius': 4,
                 'max_radius': 10,
                 'min_richness': 0.4,
@@ -254,7 +254,7 @@ class ResourcePatchGenerator:
                 'noise_strength': 0.2,
             },
             TileType.URANIUM_ORE: {
-                'frequency': 0.00008,
+                'frequency': 0.000005,  # était 0.00002
                 'min_radius': 3,
                 'max_radius': 8,
                 'min_richness': 0.3,
@@ -262,7 +262,7 @@ class ResourcePatchGenerator:
                 'noise_strength': 0.25,
             },
             TileType.DIAMOND_ORE: {
-                'frequency': 0.00004,
+                'frequency': 0.000003,  # était 0.00001
                 'min_radius': 2,
                 'max_radius': 5,
                 'min_richness': 0.2,
@@ -270,7 +270,7 @@ class ResourcePatchGenerator:
                 'noise_strength': 0.2,
             },
             TileType.BAUXITE_ORE: {
-                'frequency': 0.00025,
+                'frequency': 0.000025,  # était 0.00008
                 'min_radius': 6,
                 'max_radius': 14,
                 'min_richness': 0.5,
@@ -278,7 +278,7 @@ class ResourcePatchGenerator:
                 'noise_strength': 0.15,
             },
             TileType.TIN_ORE: {
-                'frequency': 0.0003,
+                'frequency': 0.00003,  # était 0.00010
                 'min_radius': 5,
                 'max_radius': 12,
                 'min_richness': 0.5,
@@ -373,11 +373,13 @@ class ResourcePatchGenerator:
 
         # Appliquer la densité pour le patch gagnant
         normalized_dist = 1 - best_score
-        density = best_patch.richness * (1 - normalized_dist * 0.7)
+        density = best_patch.richness * (1 - normalized_dist * 0.4)
 
         # Petit bruit de détail
         detail_noise = self.noise.noise2d(world_x * 0.5, world_y * 0.5)
-        density *= (0.85 + 0.15 * detail_noise)
+        density *= (0.92 + 0.08 * detail_noise)
+
+        density = max(density, best_score * 0.5)
 
         if random.Random(hash((world_x, world_y, best_patch.shape_seed))).random() < density:
             return best_patch.resource_type
