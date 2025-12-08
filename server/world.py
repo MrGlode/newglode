@@ -110,3 +110,31 @@ class World:
                 if int(entity.x) == x and int(entity.y) == y:
                     return entity
             return None
+
+    def preload_spawn_area(self, radius_chunks: int = 5):
+        """
+        Pré-charge les chunks autour du spawn avant connexion des joueurs.
+        radius_chunks=5 → zone de 11x11 chunks = 352x352 tiles
+        """
+        from server.world_generator import get_world_generator
+
+        generator = get_world_generator(self.seed)
+        spawn_x, spawn_y = generator.get_spawn_point()
+        spawn_cx = int(spawn_x // CHUNK_SIZE)
+        spawn_cy = int(spawn_y // CHUNK_SIZE)
+
+        total = (radius_chunks * 2 + 1) ** 2
+        loaded = 0
+
+        print(f"Pré-chargement de {total} chunks autour du spawn ({spawn_cx}, {spawn_cy})...")
+
+        for dx in range(-radius_chunks, radius_chunks + 1):
+            for dy in range(-radius_chunks, radius_chunks + 1):
+                cx, cy = spawn_cx + dx, spawn_cy + dy
+                self.get_chunk(cx, cy)  # Force la génération
+                loaded += 1
+
+                if loaded % 25 == 0:
+                    print(f"  {loaded}/{total} chunks chargés...")
+
+        print(f"Zone de spawn prête ! ({total} chunks)")

@@ -553,6 +553,8 @@ class GameServer:
         print(f"World tick rate: {WORLD_TICK_RATE} UPS")
         print(f"Network tick rate: {NETWORK_TICK_RATE} Hz")
 
+        self.world.preload_spawn_area(radius_chunks=5)
+
         accept_thread = threading.Thread(target=self.accept_connections, daemon=True)
         accept_thread.start()
 
