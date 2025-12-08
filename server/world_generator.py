@@ -410,31 +410,101 @@ class WorldGenerator:
         self.temperature_scale = 0.008
         self.detail_scale = 0.08
 
-    def get_elevation(self, world_x: float, world_y: float) -> float:
-        base = self.elevation_noise.octave_noise2d(
-            world_x * self.elevation_scale,
-            world_y * self.elevation_scale,
-            octaves=6,
-            persistence=0.5,
-            lacunarity=2.0
+        # Nouveau : bruit pour les rivières
+        self.river_noise = SimplexNoise(seed + 4)
+        self.river_noise2 = SimplexNoise(seed + 5)
+
+        # Paramètres rivières - partent des lacs
+        self.river_threshold = 0.02
+        self.river_scale = 0.006  # Plus longues et sinueuses
+        self.river_min_elevation = -0.25  # Niveau des lacs (sea_level)
+        self.river_max_elevation = -0.05  # Ne monte pas trop haut
+
+    def get_river_value(self, world_x: float, world_y: float) -> float:
+        """
+        Calcule la valeur de rivière avec ridge noise.
+        Retourne une valeur proche de 0 = rivière, loin de 0 = pas rivière.
+        """
+        # Ridge noise : on prend la valeur absolue du bruit
+        # Cela crée des "crêtes" (lignes) là où le bruit passe par zéro
+        noise1 = self.river_noise.octave_noise2d(
+            world_x * self.river_scale,
+            world_y * self.river_scale,
+            octaves=3,
+            persistence=0.5
         )
 
-        # Détail réduit pour moins de fragmentation
-        detail = self.detail_noise.noise2d(
-            world_x * self.detail_scale,
-            world_y * self.detail_scale
-        ) * 0.03
+        # Deuxième couche pour des méandres
+        noise2 = self.river_noise2.noise2d(
+            world_x * self.river_scale * 2,
+            world_y * self.river_scale * 2
+        ) * 0.3
 
-        elevation = base + detail
+        # Ridge noise = distance au zéro
+        ridge = abs(noise1 + noise2)
 
-        # Zone de départ garantie
-        dist_from_spawn = math.sqrt(world_x * world_x + world_y * world_y)
-        spawn_radius = 250
-        if dist_from_spawn < spawn_radius:
-            spawn_boost = 0.5 * (1 - dist_from_spawn / spawn_radius) ** 2
-            elevation += spawn_boost
+        return ridge
 
-        return elevation
+    def is_river(self, world_x: float, world_y: float, elevation: float) -> bool:
+        """
+        Détermine si une position est une rivière.
+        """
+        # Doit être au-dessus du niveau de l'eau mais pas trop haut
+        if elevation < self.sea_level or elevation > self.river_max_elevation:
+            return False
+
+        ridge = self.get_river_value(world_x, world_y)
+
+        # Vérifier qu'on est proche d'une zone d'eau (check rapide)
+        water_nearby = False
+        check_radius = 30  # tiles
+        for dist in [10, 20, 30]:
+            for angle in range(0, 360, 45):
+                cx = world_x + dist * math.cos(math.radians(angle))
+                cy = world_y + dist * math.sin(math.radians(angle))
+                if self.get_elevation(cx, cy) < self.sea_level:
+                    water_nearby = True
+                    break
+            if water_nearby:
+                break
+
+        if not water_nearby:
+            return False
+
+        # Largeur variable selon proximité au lac
+        elevation_above_water = elevation - self.sea_level
+        max_range = self.river_max_elevation - self.sea_level
+        proximity_factor = 1.0 - (elevation_above_water / max_range) * 0.7
+
+        adjusted_threshold = self.river_threshold * proximity_factor
+
+        return ridge < adjusted_threshold
+
+    def get_elevation(self, world_x: float, world_y: float) -> float:
+            base = self.elevation_noise.octave_noise2d(
+                world_x * self.elevation_scale,
+                world_y * self.elevation_scale,
+                octaves=6,
+                persistence=0.5,
+                lacunarity=2.0
+            )
+
+            # Détail réduit pour moins de fragmentation
+            detail = self.detail_noise.noise2d(
+                world_x * self.detail_scale,
+                world_y * self.detail_scale
+            ) * 0.03
+
+            elevation = base + detail
+
+            # Zone de départ garantie
+            dist_from_spawn = math.sqrt(world_x * world_x + world_y * world_y)
+            spawn_radius = 250
+            if dist_from_spawn < spawn_radius:
+                spawn_boost = 0.5 * (1 - dist_from_spawn / spawn_radius) ** 2
+                elevation += spawn_boost
+
+            return elevation
 
     def get_moisture(self, world_x: float, world_y: float) -> float:
         noise = self.moisture_noise.octave_noise2d(
@@ -491,6 +561,10 @@ class WorldGenerator:
         biome = self.get_biome(elevation, moisture, temperature)
 
         config = BIOME_CONFIGS[biome]
+
+        # NOUVEAU : Vérifier si c'est une rivière
+        if self.is_river(world_x, world_y, elevation):
+            return TileType.WATER
 
         # Vérifier les ressources
         resource = self.resource_generator.get_resource_at(world_x, world_y, biome)
