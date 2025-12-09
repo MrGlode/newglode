@@ -19,7 +19,9 @@ def main():
     audio.start_ambient_music()
 
     screen = pygame.display.set_mode((1280, 720), pygame.RESIZABLE | pygame.HWSURFACE | pygame.DOUBLEBUF)
-    pygame.display.set_caption("Factorio-like")
+    pygame.display.set_caption("NewGlode")
+    icon = pygame.image.load("assets/images/factory.png")
+    pygame.display.set_icon(icon)
 
     # Gestionnaire de menus
     menu_manager = MenuManager(screen)

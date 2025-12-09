@@ -143,16 +143,50 @@ class Game:
 
         current_time = time.perf_counter()
 
-        # Mouvement joueur
+        # Mouvement joueur avec collision circulaire
         if self.velocity_x != 0 or self.velocity_y != 0:
-            # Normalise la diagonale
+            # Calcule la nouvelle position
             if self.velocity_x != 0 and self.velocity_y != 0:
                 factor = 0.7071  # 1/sqrt(2)
-                self.player_x += self.velocity_x * PLAYER_SPEED * dt * factor
-                self.player_y += self.velocity_y * PLAYER_SPEED * dt * factor
+                new_x = self.player_x + self.velocity_x * PLAYER_SPEED * dt * factor
+                new_y = self.player_y + self.velocity_y * PLAYER_SPEED * dt * factor
             else:
-                self.player_x += self.velocity_x * PLAYER_SPEED * dt
-                self.player_y += self.velocity_y * PLAYER_SPEED * dt
+                new_x = self.player_x + self.velocity_x * PLAYER_SPEED * dt
+                new_y = self.player_y + self.velocity_y * PLAYER_SPEED * dt
+
+            # Hitbox circulaire
+            radius = 0.4
+
+            # Fonction helper pour convertir une coordonnée monde en coordonnée tile
+            def to_tile(coord):
+                return int(math.floor(coord))
+
+            # Fonction helper pour tester si une position est valide
+            # Teste 12 points sur le cercle + le centre
+            def can_be_at(px, py):
+                # Test centre
+                if not self.is_tile_walkable(to_tile(px), to_tile(py)):
+                    return False
+                # Test 12 points sur le périmètre
+                for i in range(12):
+                    angle = i * (360 / 12)
+                    rad = math.radians(angle)
+                    test_x = px + radius * math.cos(rad)
+                    test_y = py + radius * math.sin(rad)
+                    if not self.is_tile_walkable(to_tile(test_x), to_tile(test_y)):
+                        return False
+                return True
+
+            # Test mouvement complet
+            if can_be_at(new_x, new_y):
+                self.player_x = new_x
+                self.player_y = new_y
+            else:
+                # Essaie les axes séparément (glissement)
+                if self.velocity_x != 0 and can_be_at(new_x, self.player_y):
+                    self.player_x = new_x
+                if self.velocity_y != 0 and can_be_at(self.player_x, new_y):
+                    self.player_y = new_y
 
         # Met à jour la caméra
         self.world_view.camera_x = self.player_x
@@ -184,6 +218,29 @@ class Game:
             self.player_x,
             self.player_y
         )
+
+    def is_tile_walkable(self, x: int, y: int) -> bool:
+        """Vérifie si une tile est traversable."""
+        from admin.config import get_config
+        from shared.constants import CHUNK_SIZE
+
+        # Calcul correct du chunk avec math.floor
+        cx = math.floor(x / CHUNK_SIZE)
+        cy = math.floor(y / CHUNK_SIZE)
+
+        # Si le chunk n'est pas chargé, on autorise le mouvement
+        if (cx, cy) not in self.world_view.chunks:
+            return True
+
+        config = get_config()
+        tile_type = self.world_view.get_tile(x, y)
+        tile_config = config.tiles.get(tile_type)
+
+        if tile_config:
+            return tile_config.walkable
+
+        # Par défaut, walkable si tile inconnue
+        return True
 
     def set_velocity(self, vx: float, vy: float):
         """Définit la vélocité du joueur."""

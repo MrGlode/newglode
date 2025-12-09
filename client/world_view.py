@@ -113,18 +113,15 @@ class WorldView:
 
     def get_tile(self, world_x: int, world_y: int) -> int:
         """Retourne le type de tile à une position monde."""
-        cx = world_x // CHUNK_SIZE
-        cy = world_y // CHUNK_SIZE
-        local_x = world_x % CHUNK_SIZE
-        local_y = world_y % CHUNK_SIZE
+        import math
 
-        # Gère les coordonnées négatives
-        if world_x < 0 and local_x != 0:
-            cx -= 1
-            local_x = CHUNK_SIZE + (world_x % CHUNK_SIZE)
-        if world_y < 0 and local_y != 0:
-            cy -= 1
-            local_y = CHUNK_SIZE + (world_y % CHUNK_SIZE)
+        # math.floor fonctionne correctement pour les négatifs
+        cx = math.floor(world_x / CHUNK_SIZE)
+        cy = math.floor(world_y / CHUNK_SIZE)
+
+        # Position locale dans le chunk (toujours positive)
+        local_x = world_x - (cx * CHUNK_SIZE)
+        local_y = world_y - (cy * CHUNK_SIZE)
 
         chunk = self.chunks.get((cx, cy))
         if chunk:

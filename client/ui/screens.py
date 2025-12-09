@@ -121,7 +121,7 @@ class TitleScreen(BaseScreen):
             pygame.draw.circle(screen, (color[0], color[1], color[2]), (x, y), int(p['size']))
 
         # Titre avec effet de vague
-        title_text = "FACTORIO-LIKE"
+        title_text = "NEWGLODE"
         title_y = sh // 3
 
         # Ombre
@@ -233,7 +233,7 @@ class MainMenuScreen(BaseScreen):
         sw, sh = screen.get_size()
 
         # Titre
-        title_surface = self.title_font.render("FACTORIO-LIKE", True, Colors.PRIMARY)
+        title_surface = self.title_font.render("NEWGLODE", True, Colors.PRIMARY)
         title_rect = title_surface.get_rect(center=(sw // 2, sh // 4))
         screen.blit(title_surface, title_rect)
 

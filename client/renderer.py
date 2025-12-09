@@ -60,8 +60,8 @@ class Renderer:
         rel_x = screen_x - self.screen.get_width() // 2
         rel_y = screen_y - self.screen.get_height() // 2
 
-        world_x = rel_x / self.tile_size + self.world_view.camera_x + 0.5
-        world_y = rel_y / self.tile_size + self.world_view.camera_y + 0.5
+        world_x = rel_x / self.tile_size + self.world_view.camera_x
+        world_y = rel_y / self.tile_size + self.world_view.camera_y
 
         return world_x, world_y
 
@@ -113,9 +113,15 @@ class Renderer:
             for cy in range(min_cy, max_cy + 1):
                 surface = self.get_chunk_surface(cx, cy)
                 if surface:
-                    chunk_world_x = cx * 32
-                    chunk_world_y = cy * 32
-                    screen_x, screen_y = self.world_to_screen(chunk_world_x, chunk_world_y)
+                    # La première tile du chunk est à (cx * 32, cy * 32)
+                    # Son centre est donc à (cx * 32 + 0.5, cy * 32 + 0.5)
+                    # Mais on veut le coin supérieur gauche de la surface
+                    first_tile_x = cx * 32
+                    first_tile_y = cy * 32
+                    # world_to_screen donne la position du CENTRE d'une tile
+                    # On veut le coin, donc on passe les coordonnées du centre de la première tile
+                    # puis on soustrait pour avoir le coin
+                    screen_x, screen_y = self.world_to_screen(first_tile_x + 0.5, first_tile_y + 0.5)
                     screen_x -= self.tile_size // 2
                     screen_y -= self.tile_size // 2
 
@@ -169,7 +175,8 @@ class Renderer:
     def render_entities(self, game: 'Game'):
         """Rendu des entités (machines, convoyeurs...)."""
         for entity in self.world_view.entities.values():
-            screen_x, screen_y = self.world_to_screen(entity['x'], entity['y'])
+            # +0.5 pour centrer l'entité sur la tile
+            screen_x, screen_y = self.world_to_screen(entity['x'] + 0.5, entity['y'] + 0.5)
 
             # Vérifie si visible
             if not (0 < screen_x < self.screen.get_width() and 0 < screen_y < self.screen.get_height()):
@@ -289,22 +296,22 @@ class Renderer:
 
             screen_x, screen_y = self.world_to_screen(player['x'], player['y'])
 
-            pygame.draw.circle(self.screen, (100, 100, 255), (screen_x, screen_y - 10), 12)
-            pygame.draw.circle(self.screen, (255, 255, 255), (screen_x, screen_y - 10), 12, 2)
+            pygame.draw.circle(self.screen, (100, 100, 255), (screen_x, screen_y), 12)
+            pygame.draw.circle(self.screen, (255, 255, 255), (screen_x, screen_y), 12, 2)
 
             name_surface = self.small_font.render(player['name'], True, (255, 255, 255))
-            name_rect = name_surface.get_rect(center=(screen_x, screen_y - 30))
+            name_rect = name_surface.get_rect(center=(screen_x, screen_y - 20))
             self.screen.blit(name_surface, name_rect)
 
         # Joueur local
         if game.player_id:
             screen_x, screen_y = self.world_to_screen(game.player_x, game.player_y)
 
-            pygame.draw.circle(self.screen, (50, 205, 50), (screen_x, screen_y - 10), 12)
-            pygame.draw.circle(self.screen, (255, 255, 255), (screen_x, screen_y - 10), 12, 2)
+            pygame.draw.circle(self.screen, (50, 205, 50), (screen_x, screen_y), 12)
+            pygame.draw.circle(self.screen, (255, 255, 255), (screen_x, screen_y), 12, 2)
 
             name_surface = self.small_font.render(game.player_name, True, (255, 255, 255))
-            name_rect = name_surface.get_rect(center=(screen_x, screen_y - 30))
+            name_rect = name_surface.get_rect(center=(screen_x, screen_y - 20))
             self.screen.blit(name_surface, name_rect)
 
     def render_cursor(self, game: 'Game'):
@@ -317,7 +324,8 @@ class Renderer:
         tile_x = math.floor(world_x)
         tile_y = math.floor(world_y)
 
-        screen_x, screen_y = self.world_to_screen(tile_x, tile_y)
+        # +0.5 pour centrer le curseur sur la tile
+        screen_x, screen_y = self.world_to_screen(tile_x + 0.5, tile_y + 0.5)
 
         half = self.tile_size // 2
         rect = pygame.Rect(screen_x - half, screen_y - half, self.tile_size, self.tile_size)
