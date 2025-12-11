@@ -42,6 +42,9 @@ class Renderer:
         self.TILE_COLORS = config.tile_colors
         self.ENTITY_COLORS = config.entity_colors
 
+        # Charge les textures de tiles
+        self.tile_textures = self._load_tile_textures()
+
     def world_to_screen(self, world_x: float, world_y: float) -> Tuple[int, int]:
         """Convertit coordonnées monde en coordonnées écran (2D standard)."""
         rel_x = world_x - self.world_view.camera_x
@@ -64,6 +67,35 @@ class Renderer:
         world_y = rel_y / self.tile_size + self.world_view.camera_y
 
         return world_x, world_y
+
+    def _load_tile_textures(self) -> dict:
+        """Charge les textures des tiles depuis les fichiers PNG."""
+        import os
+
+        textures = {}
+        config = get_config()
+
+        # Chemin vers les textures de tiles
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        base_path = os.path.join(current_dir, "assets", "images", "tiles")
+
+        for tile_id, tile_config in config.tiles.items():
+            tile_name = tile_config.name.lower()
+            texture_path = os.path.join(base_path, f"{tile_name}.png")
+
+            if os.path.exists(texture_path):
+                try:
+                    texture = pygame.image.load(texture_path).convert()
+                    # Redimensionne à 32x32 si nécessaire
+                    if texture.get_size() != (32, 32):
+                        texture = pygame.transform.scale(texture, (32, 32))
+                    textures[tile_id] = texture
+                    print(f"Texture chargée: {texture_path}")
+                except Exception as e:
+                    print(f"Erreur chargement texture {texture_path}: {e}")
+
+        print(f"Textures tiles chargées: {len(textures)}/{len(config.tiles)}")
+        return textures
 
     def render(self, game: 'Game'):
         self._chunks_rebuilt_this_frame = 0
@@ -154,14 +186,17 @@ class Renderer:
                 for tx in range(32):
                     tile_type = chunk['tiles'][ty][tx]
                     if tile_type != TileType.VOID:
-                        color = self.TILE_COLORS.get(tile_type, (100, 100, 100))
                         x = tx * base_tile_size
                         y = ty * base_tile_size
 
-                        surface.fill(color, (x, y, base_tile_size, base_tile_size))
-
-                        darker = tuple(max(0, c - 30) for c in color)
-                        pygame.draw.rect(surface, darker, (x, y, base_tile_size, base_tile_size), 1)
+                        # Utilise la texture si disponible, sinon la couleur
+                        if tile_type in self.tile_textures:
+                            surface.blit(self.tile_textures[tile_type], (x, y))
+                        else:
+                            color = self.TILE_COLORS.get(tile_type, (100, 100, 100))
+                            surface.fill(color, (x, y, base_tile_size, base_tile_size))
+                            darker = tuple(max(0, c - 30) for c in color)
+                            pygame.draw.rect(surface, darker, (x, y, base_tile_size, base_tile_size), 1)
 
             self._chunk_surfaces[(cx, cy)] = surface
 
