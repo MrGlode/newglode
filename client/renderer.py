@@ -1,11 +1,12 @@
 import pygame
 import math
-from typing import TYPE_CHECKING, Tuple
+from typing import TYPE_CHECKING, Tuple, Dict, Optional
 
 from shared.constants import TILE_SIZE, CHUNK_SIZE
 from shared.tiles import TileType
 from shared.entities import EntityType, Direction
 from admin.config import get_config
+from client.tile_transitions import TileTransitionRenderer, TILE_PRIORITY, should_blend
 
 if TYPE_CHECKING:
     from client.game import Game
@@ -24,14 +25,14 @@ class Renderer:
         self.tile_size = 32
 
         # Cache chunks
-        self._chunk_surfaces = {}
+        self._chunk_surfaces: Dict[Tuple[int, int], pygame.Surface] = {}
         self._old_chunk_surfaces = {}
         self._old_tile_size = 32
         self._cached_tile_size = 32
         self._chunks_rebuilt_this_frame = 0
 
         # Cache zoom
-        self._scaled_cache = {}
+        self._scaled_cache: Dict[Tuple[int, int], pygame.Surface] = {}
         self._scaled_tile_size = 32
 
         # Minimap
@@ -44,6 +45,12 @@ class Renderer:
 
         # Charge les textures de tiles
         self.tile_textures = self._load_tile_textures()
+
+        # Renderer de transitions
+        self.transition_renderer = TileTransitionRenderer(self.TILE_COLORS, 32)
+
+        # Active/désactive les transitions (pour debug/performance)
+        self.enable_transitions = True
 
     def world_to_screen(self, world_x: float, world_y: float) -> Tuple[int, int]:
         """Convertit coordonnées monde en coordonnées écran (2D standard)."""
@@ -166,11 +173,21 @@ class Renderer:
 
                     self.screen.blit(surface, (screen_x, screen_y))
 
-    def invalidate_chunk_cache(self):
+    def invalidate_chunk_cache(self, cx: int = None, cy: int = None):
         """Invalide le cache des chunks."""
-        self._chunk_surfaces.clear()
+        if cx is not None and cy is not None:
+            # Invalide un chunk spécifique et ses voisins (pour les transitions)
+            for dx in range(-1, 2):
+                for dy in range(-1, 2):
+                    key = (cx + dx, cy + dy)
+                    self._chunk_surfaces.pop(key, None)
+                    self._scaled_cache.pop(key, None)
+        else:
+            # Invalide tout le cache
+            self._chunk_surfaces.clear()
+            self._scaled_cache.clear()
 
-    def get_chunk_surface(self, cx: int, cy: int) -> pygame.Surface:
+    def get_chunk_surface(self, cx: int, cy: int) -> Optional[pygame.Surface]:
         """Retourne une surface cachée pour le chunk (toujours à tile_size=32)."""
         if (cx, cy) not in self._chunk_surfaces:
             chunk = self.world_view.chunks.get((cx, cy))
@@ -182,6 +199,7 @@ class Renderer:
             chunk_size = 32 * base_tile_size
             surface = pygame.Surface((chunk_size, chunk_size))
 
+            # Première passe : tiles de base
             for ty in range(32):
                 for tx in range(32):
                     tile_type = chunk['tiles'][ty][tx]
@@ -195,12 +213,91 @@ class Renderer:
                         else:
                             color = self.TILE_COLORS.get(tile_type, (100, 100, 100))
                             surface.fill(color, (x, y, base_tile_size, base_tile_size))
-                            darker = tuple(max(0, c - 30) for c in color)
-                            pygame.draw.rect(surface, darker, (x, y, base_tile_size, base_tile_size), 1)
+
+            # Deuxième passe : transitions (si activées)
+            if self.enable_transitions:
+                self._render_chunk_transitions(surface, cx, cy, chunk, base_tile_size)
 
             self._chunk_surfaces[(cx, cy)] = surface
 
         return self._chunk_surfaces[(cx, cy)]
+
+    def _render_chunk_transitions(self, surface: pygame.Surface, cx: int, cy: int,
+                                  chunk: dict, tile_size: int):
+        """Rend les transitions de tiles sur la surface du chunk."""
+        tiles = chunk['tiles']
+
+        for ty in range(32):
+            for tx in range(32):
+                tile_type = TileType(tiles[ty][tx])
+                if tile_type == TileType.VOID:
+                    continue
+
+                # Coordonnées monde de cette tile
+                world_x = cx * 32 + tx
+                world_y = cy * 32 + ty
+
+                current_priority = TILE_PRIORITY.get(tile_type, 2)
+
+                # Calcule le masque de transition pour chaque type de tile voisin
+                neighbor_masks: Dict[TileType, int] = {}
+
+                # Vérifie les 4 directions cardinales
+                for dx, dy, bit in self.transition_renderer.CARDINAL_DIRS:
+                    neighbor_tile = self._get_tile_at(world_x + dx, world_y + dy)
+                    if neighbor_tile is None:
+                        continue
+
+                    neighbor_priority = TILE_PRIORITY.get(neighbor_tile, 2)
+
+                    # Le voisin a une priorité supérieure -> il déborde sur nous
+                    if neighbor_priority > current_priority and should_blend(tile_type, neighbor_tile):
+                        if neighbor_tile not in neighbor_masks:
+                            neighbor_masks[neighbor_tile] = 0
+                        neighbor_masks[neighbor_tile] |= bit
+
+                # Vérifie les 4 coins (diagonales)
+                for dx, dy, bit in self.transition_renderer.DIAGONAL_DIRS:
+                    neighbor_tile = self._get_tile_at(world_x + dx, world_y + dy)
+                    if neighbor_tile is None:
+                        continue
+
+                    neighbor_priority = TILE_PRIORITY.get(neighbor_tile, 2)
+
+                    if neighbor_priority > current_priority and should_blend(tile_type, neighbor_tile):
+                        if neighbor_tile not in neighbor_masks:
+                            neighbor_masks[neighbor_tile] = 0
+                        neighbor_masks[neighbor_tile] |= bit
+
+                # Dessine les overlays de transition
+                x = tx * tile_size
+                y = ty * tile_size
+
+                # Trie par priorité pour dessiner dans le bon ordre
+                sorted_tiles = sorted(
+                    neighbor_masks.keys(),
+                    key=lambda t: TILE_PRIORITY.get(t, 2)
+                )
+
+                for neighbor_tile in sorted_tiles:
+                    mask = neighbor_masks[neighbor_tile]
+                    if mask > 0:
+                        transition_surface = self.transition_renderer.get_transition_surface(
+                            neighbor_tile, mask
+                        )
+                        if transition_surface:
+                            surface.blit(transition_surface, (x, y))
+
+    def _get_tile_at(self, world_x: int, world_y: int) -> Optional[TileType]:
+        """Récupère le type de tile à une position monde (avec accès inter-chunk)."""
+        tile_id = self.world_view.get_tile(world_x, world_y)
+        if tile_id == 0:  # VOID - peut être chunk non chargé
+            # Vérifie si le chunk existe
+            cx = world_x // 32
+            cy = world_y // 32
+            if (cx, cy) not in self.world_view.chunks:
+                return None  # Chunk non chargé
+        return TileType(tile_id)
 
     def draw_tile(self, x: int, y: int, color: Tuple[int, int, int]):
         """Dessine une tile carrée (optimisé)."""
@@ -659,6 +756,7 @@ class Renderer:
             f"Entities: {len(self.world_view.entities)}",
             f"Players: {len(self.world_view.other_players) + 1}",
             f"Bandwidth: {game.bandwidth} B/s",
+            f"Transitions: {'ON' if self.enable_transitions else 'OFF'}",
         ]
 
         y = 10
