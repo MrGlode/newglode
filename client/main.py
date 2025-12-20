@@ -119,25 +119,15 @@ def main():
 
         # Render
         if menu_manager.state == GameState.PLAYING and game and game.connected:
-            game.renderer.render(game)
-            game.inventory_ui.render_hotbar(screen, game)
-
-            if game.inspected_entity:
-                game.renderer.render_inspection_panel(game)
-
-            game.inventory_ui.render(screen, game)
-
-            if game.show_debug:
-                game.renderer.render_debug(game)
+            game.renderer.render(game)  # ✅ Tout est géré ici, y compris le flip
 
         elif menu_manager.state == GameState.PAUSED:
-            # PauseScreen gère tout (screenshot + overlay + widgets)
             menu_manager.render()
+            pygame.display.flip()
 
         else:
             menu_manager.render()
-
-        pygame.display.flip()
+            pygame.display.flip()
 
     # Cleanup
     if game:
