@@ -25,6 +25,9 @@ class InventoryUI:
         self.selected_slot: Optional[int] = None  # Slot sélectionné pour déplacement
         self.hovered_slot: Optional[int] = None
 
+        self._overlay_cache: Optional[pygame.Surface] = None
+        self._overlay_size: Tuple[int, int] = (0,0)
+
         # Fonts
         self.font = pygame.font.Font(None, 24)
         self.small_font = pygame.font.Font(None, 18)
