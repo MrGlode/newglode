@@ -25,8 +25,15 @@ class InventoryUI:
         self.selected_slot: Optional[int] = None  # Slot sélectionné pour déplacement
         self.hovered_slot: Optional[int] = None
 
+        # Overlay cache
         self._overlay_cache: Optional[pygame.Surface] = None
         self._overlay_size: Tuple[int, int] = (0,0)
+
+        # Drag & Drop
+        self._dragging = False
+        self._drag_slot: Optional[int] = None
+        self._drag_item: Optional[dict] = None
+        self._drag_pos: Tuple[int, int] = (0,0)
 
         # Fonts
         self.font = pygame.font.Font(None, 24)
@@ -40,6 +47,7 @@ class InventoryUI:
         self.SLOT_SELECTED_COLOR = (80, 100, 80)
         self.TEXT_COLOR = (255, 255, 255)
         self.COUNT_COLOR = (255, 255, 100)
+        self.DRAG_COLOR = (40, 40, 50)
 
     def toggle(self):
         """Ouvre/ferme l'inventaire."""
@@ -91,11 +99,56 @@ class InventoryUI:
                 return i
         return None
 
+    def handle_mouse_down(self, pos: Tuple[int, int], button: int, game: 'Game') -> bool:
+        if not self.visible:
+            return False
+
+        panel_rect = self.get_panel_rect(game.screen)
+
+        if not panel_rect.collidepoint(pos):
+            self.close()
+            return True
+
+        slot_index = self.get_slot_at_pos(pos, panel_rect)
+
+        if slot_index is not None and button == 1:
+            slot = self.slots[slot_index] if slot_index < len(self.slots) else None
+            if slot:
+                self._dragging = True
+                self._drag_slot = slot_index
+                self._drag_item = slot.copy()
+                self._drag_pos = pos
+                return True
+
+        elif slot_index is not None and button == 3:
+            self._handle_right_click(slot_index, game)
+            return True
+
+        return True
+
+    def handle_mouse_up(self, pos: Tuple[int, int], button: int, game: 'Game') -> bool:
+        if not self.visible or not self._dragging:
+            return False
+
+        if button != 1:
+            return False
+
+        panel_rect = self.get_panel_rect(game.screen)
+        target_slot = self.get_slot_at_pos(pos, panel_rect)
+
+        if target_slot is not None and target_slot != self._drag_slot:
+            if game.network:
+                game.network.send_inventory_swap(self._drag_slot, target_slot)
+
+        self._end_drag()
+        return True
+
+    """
     def handle_click(self, pos: Tuple[int, int], button: int, game: 'Game') -> bool:
-        """
-        Gère un clic sur l'inventaire.
-        Retourne True si le clic a été consommé.
-        """
+
+        # Gère un clic sur l'inventaire.
+        # Retourne True si le clic a été consommé.
+
         if not self.visible:
             return False
 
@@ -114,9 +167,11 @@ class InventoryUI:
                 self._handle_right_click(slot_index, game)
 
         return True
+    """
 
     def _handle_left_click(self, slot_index: int, game: 'Game'):
-        """Gère le clic gauche sur un slot."""
+        # Gère le clic gauche sur un slot.
+
         slot = self.slots[slot_index]
 
         if self.selected_slot is None:
@@ -132,7 +187,7 @@ class InventoryUI:
             self.selected_slot = None
 
     def _handle_right_click(self, slot_index: int, game: 'Game'):
-        """Gère le clic droit sur un slot (prend la moitié)."""
+        # Gère le clic droit sur un slot (prend la moitié).
         slot = self.slots[slot_index]
 
         if slot and game.inspected_entity:
@@ -152,6 +207,15 @@ class InventoryUI:
 
         panel_rect = self.get_panel_rect(screen)
         self.hovered_slot = self.get_slot_at_pos(pos, panel_rect)
+
+        if self._dragging:
+            self._drag_pos = pos
+
+    def _end_drag(self):
+        self._dragging = False
+        self._drag_slot = None
+        self._drag_item = None
+        self._drag_pos = (0,0)
 
     def render(self, screen: pygame.Surface, game: 'Game'):
         """Affiche l'inventaire."""
@@ -183,14 +247,16 @@ class InventoryUI:
         help_x = panel_rect.x + (panel_rect.width - help_text.get_width()) // 2
         screen.blit(help_text, (help_x, panel_rect.y + panel_rect.height - 25))
 
+        self._render_dragged_item(screen, game)
+
     def _render_slot(self, screen: pygame.Surface, index: int, panel_rect: pygame.Rect, game: 'Game'):
         """Affiche un slot individuel."""
         slot_rect = self.get_slot_rect(index, panel_rect)
         slot = self.slots[index] if index < len(self.slots) else None
 
         # Couleur de fond selon l'état
-        if index == self.selected_slot:
-            color = self.SLOT_SELECTED_COLOR
+        if index == self._drag_slot:
+            color = self.DRAG_COLOR
         elif index == self.hovered_slot:
             color = self.SLOT_HOVER_COLOR
         else:
@@ -200,34 +266,69 @@ class InventoryUI:
         pygame.draw.rect(screen, color, slot_rect)
         pygame.draw.rect(screen, self.BORDER_COLOR, slot_rect, 1)
 
-        # Contenu du slot
-        if slot:
-            item_name = slot.get('item', '')
-            count = slot.get('count', 0)
+        if slot and index != self._drag_slot:
+            self._render_item_in_slot(screen, slot, slot_rect, game)
 
-            # Couleur de l'item
-            item_color = self._get_item_color(item_name, game)
+    def _render_item_in_slot(self, screen: pygame.Surface, slot: dict, slot_rect: pygame.Rect, game: 'Game'):
+        """Affiche un item dans un slot."""
+        item_name = slot.get('item', '')
+        count = slot.get('count', 0)
 
-            # Carré coloré représentant l'item
-            item_rect = pygame.Rect(
-                slot_rect.x + 8,
-                slot_rect.y + 6,
-                self.SLOT_SIZE - 16,
-                self.SLOT_SIZE - 20
-            )
-            pygame.draw.rect(screen, item_color, item_rect)
-            pygame.draw.rect(screen, (255, 255, 255), item_rect, 1)
+        # Couleur de l'item
+        item_color = self._get_item_color(item_name, game)
 
-            # Quantité
-            if count > 1:
-                count_text = self.small_font.render(str(count), True, self.COUNT_COLOR)
-                count_x = slot_rect.x + self.SLOT_SIZE - count_text.get_width() - 4
-                count_y = slot_rect.y + self.SLOT_SIZE - count_text.get_height() - 2
+        # Carré coloré représentant l'item
+        item_rect = pygame.Rect(
+            slot_rect.x + 8,
+            slot_rect.y + 6,
+            self.SLOT_SIZE - 16,
+            self.SLOT_SIZE - 20
+        )
+        pygame.draw.rect(screen, item_color, item_rect)
+        pygame.draw.rect(screen, (255, 255, 255), item_rect, 1)
 
-                # Ombre
-                shadow = self.small_font.render(str(count), True, (0, 0, 0))
-                screen.blit(shadow, (count_x + 1, count_y + 1))
-                screen.blit(count_text, (count_x, count_y))
+        # Quantité
+        if count > 1:
+            count_text = self.small_font.render(str(count), True, self.COUNT_COLOR)
+            count_x = slot_rect.x + self.SLOT_SIZE - count_text.get_width() - 4
+            count_y = slot_rect.y + self.SLOT_SIZE - count_text.get_height() - 2
+
+            shadow = self.small_font.render(str(count), True, (0, 0, 0))
+            screen.blit(shadow, (count_x + 1, count_y + 1))
+            screen.blit(count_text, (count_x, count_y))
+
+    def _render_dragged_item(self, screen: pygame.Surface, game: 'Game'):
+        """Affiche l'item en cours de drag sous le curseur."""
+        if not self._dragging or not self._drag_item:
+            return
+
+        item_name = self._drag_item.get('item', '')
+        count = self._drag_item.get('count', 0)
+        item_color = self._get_item_color(item_name, game)
+
+        # Taille de l'item draggé (légèrement plus grand)
+        size = self.SLOT_SIZE - 8
+        x = self._drag_pos[0] - size // 2
+        y = self._drag_pos[1] - size // 2
+
+        # Ombre
+        shadow_rect = pygame.Rect(x + 4, y + 4, size, size)
+        pygame.draw.rect(screen, (0, 0, 0, 100), shadow_rect)
+
+        # Item
+        item_rect = pygame.Rect(x, y, size, size)
+        pygame.draw.rect(screen, item_color, item_rect)
+        pygame.draw.rect(screen, (255, 255, 255), item_rect, 2)
+
+        # Quantité
+        if count > 1:
+            count_text = self.small_font.render(str(count), True, self.COUNT_COLOR)
+            count_x = x + size - count_text.get_width()
+            count_y = y + size - count_text.get_height()
+
+            shadow = self.small_font.render(str(count), True, (0, 0, 0))
+            screen.blit(shadow, (count_x + 1, count_y + 1))
+            screen.blit(count_text, (count_x, count_y))
 
     def _get_item_color(self, item_name: str, game: 'Game') -> Tuple[int, int, int]:
         """Récupère la couleur d'un item."""

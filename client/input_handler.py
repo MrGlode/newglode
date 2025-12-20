@@ -24,7 +24,13 @@ class InputHandler:
                 self.handle_keyup(event.key)
 
             elif event.type == pygame.MOUSEBUTTONDOWN:
-                self.handle_mousedown(event.button)
+                self.handle_mousedown(event.button, event.pos)
+
+            elif event.type == pygame.MOUSEBUTTONUP:
+                self.handle_mouseup(event.button, event.pos)
+
+            elif event.type == pygame.MOUSEMOTION:
+                self.handle_mousemotion(event.pos)
 
             elif event.type == pygame.MOUSEWHEEL:
                 self.handle_mousewheel(event.y)
@@ -44,7 +50,13 @@ class InputHandler:
             self.handle_keyup(event.key)
 
         elif event.type == pygame.MOUSEBUTTONDOWN:
-            self.handle_mousedown(event.button)
+            self.handle_mousedown(event.button, event.pos)
+
+        elif event.type == pygame.MOUSEBUTTONUP:
+            self.handle_mouseup(event.button, event.pos)
+
+        elif event.type == pygame.MOUSEMOTION:
+            self.handle_mousemotion(event.pos)
 
         elif event.type == pygame.MOUSEWHEEL:
             self.handle_mousewheel(event.y)
@@ -143,15 +155,14 @@ class InputHandler:
     def handle_keyup(self, key: int):
         pass
 
-    def handle_mousedown(self, button: int):
-        # Vérifie d'abord si l'inventaire est ouvert et consomme le clic
+    def handle_mousedown(self, button: int, pos: tuple = None):
+        """Gère l'appui sur un bouton de souris."""
+        if pos is None:
+            pos = pygame.mouse.get_pos()
+
+        # Inventaire ouvert → priorité au drag & drop
         if self.game.inventory_ui.visible:
-            mouse_pos = pygame.mouse.get_pos()
-            if self.game.inventory_ui.handle_click(mouse_pos, button, self.game):
-                return
-            # Clic en dehors du panneau = ferme l'inventaire
-            if button == 1 or button == 3:
-                self.game.inventory_ui.close()
+            if self.game.inventory_ui.handle_mouse_down(pos, button, self.game):
                 return
 
         if button == 1:  # Clic gauche
@@ -183,6 +194,21 @@ class InputHandler:
                 self.game.close_inspection()
             else:
                 self.game.destroy_at_cursor()
+
+    def handle_mouseup(self, button: int, pos: tuple = None):
+        """Gère le relâchement d'un bouton de souris."""
+        if pos is None:
+            pos = pygame.mouse.get_pos()
+
+        # Inventaire → fin du drag & drop
+        if self.game.inventory_ui.visible:
+            if self.game.inventory_ui.handle_mouse_up(pos, button, self.game):
+                return
+
+    def handle_mousemotion(self, pos: tuple):
+        """Gère le mouvement de la souris."""
+        # Mise à jour du survol inventaire et position drag
+        self.game.inventory_ui.handle_mouse_motion(pos, self.game.screen)
 
     def handle_recipe_click(self) -> bool:
         """Gère le clic sur un bouton de recette. Retourne True si un bouton a été cliqué."""
