@@ -2,6 +2,7 @@
 Interface d'inventaire pour le client.
 Affiche l'inventaire du joueur et gère les interactions.
 """
+from os.path import split
 
 import pygame
 from typing import Optional, List, Dict, Tuple, TYPE_CHECKING
@@ -34,10 +35,17 @@ class InventoryUI:
         self._drag_slot: Optional[int] = None
         self._drag_item: Optional[dict] = None
         self._drag_pos: Tuple[int, int] = (0,0)
+        self._drag_is_split: bool = False
+        self._drag_remaining: Optional[dict] = None
 
         # Fonts
         self.font = pygame.font.Font(None, 24)
         self.small_font = pygame.font.Font(None, 18)
+
+        # Tooltips
+        self._tooltip_font = pygame.font.Font(None, 20)
+        self._hover_time: float = 0
+        self._hover_delay: float = 0.3
 
         # Couleurs
         self.BG_COLOR = (30, 30, 40)
@@ -111,26 +119,26 @@ class InventoryUI:
 
         slot_index = self.get_slot_at_pos(pos, panel_rect)
 
-        if slot_index is not None and button == 1:
+        if slot_index is not None:
             slot = self.slots[slot_index] if slot_index < len(self.slots) else None
-            if slot:
-                self._dragging = True
-                self._drag_slot = slot_index
-                self._drag_item = slot.copy()
-                self._drag_pos = pos
-                return True
 
-        elif slot_index is not None and button == 3:
-            self._handle_right_click(slot_index, game)
-            return True
+            if slot and button == 1:
+                self._start_drag(slot_index, slot, split=False)
+                return True
+            elif slot and button == 3:
+                self._start_drag(slot_index, slot, split=True)
+                return True
 
         return True
 
     def handle_mouse_up(self, pos: Tuple[int, int], button: int, game: 'Game') -> bool:
-        if not self.visible or not self._dragging:
+        if not self.visible:
             return False
 
-        if button != 1:
+        if not self._dragging:
+            return False
+
+        if button not in (1, 3):
             return False
 
         panel_rect = self.get_panel_rect(game.screen)
@@ -138,7 +146,14 @@ class InventoryUI:
 
         if target_slot is not None and target_slot != self._drag_slot:
             if game.network:
-                game.network.send_inventory_swap(self._drag_slot, target_slot)
+                if self._drag_is_split:
+                    count = self._drag_item.get('count', 0)
+                    game.network.send_inventory_split(self._drag_slot, target_slot, count)
+                else:
+                    game.network.send_inventory_swap(self._drag_slot, target_slot)
+
+                from client.audio import get_audio
+                get_audio().play_ui_click()
 
         self._end_drag()
         return True
@@ -211,11 +226,34 @@ class InventoryUI:
         if self._dragging:
             self._drag_pos = pos
 
+    def _start_drag(self, slot_index: int, slot: dict, split: bool):
+        """Démarre un drag (complet ou split)."""
+        item_name = slot.get('item', '')
+        total_count = slot.get('count', 0)
+
+        if split and total_count > 1:
+            drag_count = (total_count + 1) // 2
+            remaining_count = total_count - drag_count
+
+            self._drag_item = {'item': item_name, 'count': drag_count}
+            self._drag_remaining = {'item': item_name, 'count': remaining_count}
+            self._drag_is_split = True
+        else:
+            self._drag_item = slot.copy()
+            self._drag_remaining = None
+            self._drag_is_split = False
+
+        self._dragging = True
+        self._drag_slot = slot_index
+        self._drag_pos = pygame.mouse.get_pos()
+
     def _end_drag(self):
         self._dragging = False
         self._drag_slot = None
         self._drag_item = None
         self._drag_pos = (0,0)
+        self._drag_is_split = False
+        self._drag_remaining = None
 
     def render(self, screen: pygame.Surface, game: 'Game'):
         """Affiche l'inventaire."""
@@ -249,6 +287,8 @@ class InventoryUI:
 
         self._render_dragged_item(screen, game)
 
+        self._render_tooltip(screen, game)
+
     def _render_slot(self, screen: pygame.Surface, index: int, panel_rect: pygame.Rect, game: 'Game'):
         """Affiche un slot individuel."""
         slot_rect = self.get_slot_rect(index, panel_rect)
@@ -266,7 +306,14 @@ class InventoryUI:
         pygame.draw.rect(screen, color, slot_rect)
         pygame.draw.rect(screen, self.BORDER_COLOR, slot_rect, 1)
 
-        if slot and index != self._drag_slot:
+        if index == self._drag_slot:
+            # Slot source du drag
+            if self._drag_is_split and self._drag_remaining:
+                # Split : affiche ce qui RESTE (pas ce qu'on drag)
+                self._render_item_in_slot(screen, self._drag_remaining, slot_rect, game)
+            # else: drag complet → slot vide visuellement (rien à afficher)
+        elif slot:
+            # Slot normal
             self._render_item_in_slot(screen, slot, slot_rect, game)
 
     def _render_item_in_slot(self, screen: pygame.Surface, slot: dict, slot_rect: pygame.Rect, game: 'Game'):
@@ -329,6 +376,58 @@ class InventoryUI:
             shadow = self.small_font.render(str(count), True, (0, 0, 0))
             screen.blit(shadow, (count_x + 1, count_y + 1))
             screen.blit(count_text, (count_x, count_y))
+
+    def _render_tooltip(self, screen: pygame.Surface, game: 'Game'):
+        if self._dragging:
+            return
+
+        if self.hovered_slot is None:
+            return
+
+        slot = self.slots[self.hovered_slot] if self.hovered_slot < len(self.slots) else None
+        if not slot:
+            return
+
+        item_name = slot.get('item', '')
+        count = slot.get('count', 0)
+
+        if not item_name:
+            return
+
+        from admin.config import get_config
+        config = get_config()
+        item_config = config.items.get(item_name)
+        display_name = item_config.display_name if item_config else item_name.replace('_', ' ').title()
+
+        text = f"{display_name}"
+        if count > 1:
+            text += f" (x{count})"
+
+        text_surface = self._tooltip_font.render(text, True, (255,255,255))
+        padding = 8
+
+        tooltip_width = text_surface.get_width() + padding * 2
+        tooltip_height = text_surface.get_height() + padding * 2
+
+        mouse_x, mouse_y = pygame.mouse.get_pos()
+        tooltip_x = mouse_x + 15
+        tooltip_y = mouse_y - tooltip_height - 5
+
+        screen_w, screen_h = screen.get_size()
+        if tooltip_x + tooltip_width > screen_w:
+            tooltip_x = mouse_x - tooltip_width - 10
+        if tooltip_y < 0:
+            tooltip_y = mouse_y + 20
+
+        tooltip_rect = pygame.Rect(tooltip_x, tooltip_y, tooltip_width, tooltip_height)
+
+        tooltip_surface = pygame.Surface((tooltip_width, tooltip_height), pygame.SRCALPHA)
+        tooltip_surface.fill((20, 20, 30, 230))
+        screen.blit(tooltip_surface, (tooltip_x, tooltip_y))
+
+        pygame.draw.rect(screen, (100, 100, 120), tooltip_rect, 1)
+
+        screen.blit(text_surface, (tooltip_x + padding, tooltip_y + padding))
 
     def _get_item_color(self, item_name: str, game: 'Game') -> Tuple[int, int, int]:
         """Récupère la couleur d'un item."""

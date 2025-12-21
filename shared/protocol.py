@@ -58,7 +58,7 @@ INV_ACTION_TRANSFER_TO = 3  # Transférer vers une entité (chest, furnace...)
 INV_ACTION_TRANSFER_FROM = 4  # Transférer depuis une entité
 INV_ACTION_SWAP = 5  # Échanger deux slots d'inventaire
 INV_ACTION_CRAFT = 6  # Fabriquer un item manuellement
-
+INV_ACTION_SPLIT = 7
 
 # ============================================
 # FONCTIONS DE SÉRIALISATION

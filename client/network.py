@@ -16,7 +16,7 @@ from shared.protocol import (
     MSG_INVENTORY_UPDATE, MSG_INVENTORY_ACTION,
     ACTION_BUILD, ACTION_DESTROY, ACTION_CONFIGURE,
     INV_ACTION_PICKUP, INV_ACTION_DROP, INV_ACTION_TRANSFER_TO,
-    INV_ACTION_TRANSFER_FROM, INV_ACTION_SWAP, INV_ACTION_CRAFT
+    INV_ACTION_TRANSFER_FROM, INV_ACTION_SWAP, INV_ACTION_CRAFT, INV_ACTION_SPLIT
 )
 
 if TYPE_CHECKING:
@@ -263,4 +263,12 @@ class NetworkClient:
         self.send(MSG_INVENTORY_ACTION, {
             'action': INV_ACTION_CRAFT,
             'recipe': recipe
+        })
+
+    def send_inventory_split(self, from_slot: int, to_slot: int, count: int):
+        self.send(MSG_INVENTORY_ACTION, {
+            'action': INV_ACTION_SPLIT,
+            'from_slot': from_slot,
+            'to_slot': to_slot,
+            'count': count
         })
