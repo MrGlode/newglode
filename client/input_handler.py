@@ -128,6 +128,14 @@ class InputHandler:
         mouse_x, mouse_y = pygame.mouse.get_pos()
         screen_w = self.game.screen.get_width()
         screen_h = self.game.screen.get_height()
+
+        # Si inventaire ouvert, vérifie le scroll sur le panneau craft
+        if self.game.inventory_ui.visible:
+            craft_rect = self.game.inventory_ui.get_craft_panel_rect(self.game.screen)
+            if craft_rect.collidepoint(mouse_x, mouse_y):
+                self.game.inventory_ui.scroll_craft_panel(-direction * 30, self.game.screen)
+                return
+
         minimap_size = int(min(screen_w, screen_h) * 0.15)
         margin = 10
 
@@ -145,7 +153,6 @@ class InputHandler:
         else:
             # Zoom map principale
             renderer = self.game.renderer
-            old_size = renderer.tile_size
 
             if direction > 0:
                 renderer.tile_size = min(64, renderer.tile_size + 4)

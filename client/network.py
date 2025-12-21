@@ -258,11 +258,12 @@ class NetworkClient:
             'slot2': slot2
         })
 
-    def send_inventory_craft(self, recipe: str):
-        """Demande à fabriquer un item."""
+    def send_inventory_craft(self, recipe: str, count: int = 1):
+        """Demande à fabriquer des items."""
         self.send(MSG_INVENTORY_ACTION, {
             'action': INV_ACTION_CRAFT,
-            'recipe': recipe
+            'recipe': recipe,
+            'count': count
         })
 
     def send_inventory_split(self, from_slot: int, to_slot: int, count: int):

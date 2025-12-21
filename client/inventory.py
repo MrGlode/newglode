@@ -3,6 +3,7 @@ Interface d'inventaire pour le client.
 Affiche l'inventaire du joueur et gère les interactions.
 """
 from os.path import split
+from time import sleep
 
 import pygame
 from typing import Optional, List, Dict, Tuple, TYPE_CHECKING
@@ -47,6 +48,16 @@ class InventoryUI:
         self._hover_time: float = 0
         self._hover_delay: float = 0.3
 
+        # Crafting panel
+        self.CRAFTING_PANEL_WIDTH = 220
+        self.RECIPE_HEIGHT = 70
+        self.RECIPE_PADDING = 4
+
+        # Crafting state
+        self._craft_scroll_offset = 0
+        self._hovered_recipe: Optional[str] = None
+        self._craft_recipes: List[dict] = []
+
         # Couleurs
         self.BG_COLOR = (30, 30, 40)
         self.BORDER_COLOR = (100, 100, 120)
@@ -79,15 +90,29 @@ class InventoryUI:
             self.slots.append(None)
 
     def get_panel_rect(self, screen: pygame.Surface) -> pygame.Rect:
-        """Calcule le rectangle du panneau d'inventaire."""
-        panel_width = self.COLS * (self.SLOT_SIZE + self.SLOT_PADDING) + self.MARGIN * 2
-        panel_height = self.ROWS * (self.SLOT_SIZE + self.SLOT_PADDING) + self.MARGIN * 2 + 40  # +40 pour le titre
+        inv_width = self.COLS * (self.SLOT_SIZE + self.SLOT_PADDING) + self.MARGIN * 2
+        inv_height = self.ROWS * (self.SLOT_SIZE + self.SLOT_PADDING) + self.MARGIN * 2 + 40
+
+        # Largeur totale = inventaire + espace + craft
+        total_width = inv_width + 10 + self.CRAFTING_PANEL_WIDTH
 
         screen_w, screen_h = screen.get_size()
-        x = (screen_w - panel_width) // 2
-        y = (screen_h - panel_height) // 2
 
-        return pygame.Rect(x, y, panel_width, panel_height)
+        # Centre l'ensemble
+        start_x = (screen_w - total_width) // 2
+        y = (screen_h - inv_height) // 2
+
+        return pygame.Rect(start_x, y, inv_width, inv_height)
+
+    def get_craft_panel_rect(self, screen: pygame.Surface) -> pygame.Rect:
+        inv_rect = self.get_panel_rect(screen)
+
+        return pygame.Rect(
+            inv_rect.right + 10,
+            inv_rect.y,
+            self.CRAFTING_PANEL_WIDTH,
+            inv_rect.height
+        )
 
     def get_slot_rect(self, index: int, panel_rect: pygame.Rect) -> pygame.Rect:
         """Calcule le rectangle d'un slot."""
@@ -112,7 +137,16 @@ class InventoryUI:
             return False
 
         panel_rect = self.get_panel_rect(game.screen)
+        craft_rect = self.get_craft_panel_rect(game.screen)
 
+        # Clic sur le panneau craft
+        if craft_rect.collidepoint(pos):
+            recipe_name = self._get_recipe_at_pos(pos, game.screen)
+            if recipe_name:
+                self._handle_craft_click(recipe_name, button, game)
+            return True
+
+        # Clic hors panneaux → fermer l'inventaire
         if not panel_rect.collidepoint(pos):
             self.close()
             return True
@@ -122,14 +156,49 @@ class InventoryUI:
         if slot_index is not None:
             slot = self.slots[slot_index] if slot_index < len(self.slots) else None
 
-            if slot and button == 1:
+            if slot and button == 1:  # Clic gauche = drag tout
                 self._start_drag(slot_index, slot, split=False)
                 return True
-            elif slot and button == 3:
+
+            elif slot and button == 3:  # Clic droit = drag la moitié
                 self._start_drag(slot_index, slot, split=True)
                 return True
 
         return True
+
+    def _handle_craft_click(self, recipe_name: str, button: int, game: 'Game'):
+        """Gère un clic sur une recette."""
+        # Trouve la recette
+        recipe = None
+        for r in self._craft_recipes:
+            if r['name'] == recipe_name:
+                recipe = r
+                break
+
+        if not recipe or not recipe['can_craft']:
+            # Recette non craftable - son feedback
+            from client.audio import get_audio
+            # get_audio().play_error()  # Si tu as un son d'erreur
+            return
+
+        # Détermine la quantité à crafter
+        keys = pygame.key.get_pressed()
+        shift_held = keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]
+
+        if shift_held:
+            # Shift + clic = max
+            count = recipe['max_craft']
+        elif button == 3:
+            # Clic droit = 5 (ou max si moins de 5 possibles)
+            count = min(5, recipe['max_craft'])
+        else:
+            # Clic gauche = 1
+            count = 1
+
+        if count > 0 and game.network:
+            game.network.send_inventory_craft(recipe_name, count)
+            from client.audio import get_audio
+            get_audio().play_ui_click()
 
     def handle_mouse_up(self, pos: Tuple[int, int], button: int, game: 'Game') -> bool:
         if not self.visible:
@@ -157,32 +226,6 @@ class InventoryUI:
 
         self._end_drag()
         return True
-
-    """
-    def handle_click(self, pos: Tuple[int, int], button: int, game: 'Game') -> bool:
-
-        # Gère un clic sur l'inventaire.
-        # Retourne True si le clic a été consommé.
-
-        if not self.visible:
-            return False
-
-        panel_rect = self.get_panel_rect(game.screen)
-
-        # Vérifie si le clic est dans le panneau
-        if not panel_rect.collidepoint(pos):
-            return False
-
-        slot_index = self.get_slot_at_pos(pos, panel_rect)
-
-        if slot_index is not None:
-            if button == 1:  # Clic gauche
-                self._handle_left_click(slot_index, game)
-            elif button == 3:  # Clic droit
-                self._handle_right_click(slot_index, game)
-
-        return True
-    """
 
     def _handle_left_click(self, slot_index: int, game: 'Game'):
         # Gère le clic gauche sur un slot.
@@ -218,10 +261,14 @@ class InventoryUI:
         """Met à jour le slot survolé."""
         if not self.visible:
             self.hovered_slot = None
+            self._hovered_recipe = None
             return
 
         panel_rect = self.get_panel_rect(screen)
         self.hovered_slot = self.get_slot_at_pos(pos, panel_rect)
+
+        # Vérifie le survol des recettes
+        self._hovered_recipe = self._get_recipe_at_pos(pos, screen)
 
         if self._dragging:
             self._drag_pos = pos
@@ -255,23 +302,80 @@ class InventoryUI:
         self._drag_is_split = False
         self._drag_remaining = None
 
+    def _update_craft_recipes(self):
+        from admin.config import get_config
+        config = get_config()
+
+        self._craft_recipes = []
+
+        for name, recipe in config.assembler_recipes.items():
+            inventory_count = self._count_items_in_inventory()
+
+            can_craft, missing, max_craft = self._check_recipe_craftable(recipe, inventory_count)
+
+            self._craft_recipes.append({
+                'name': name,
+                'display_name': recipe.display_name,
+                'ingredients': recipe.ingredients,
+                'result': recipe.result,
+                'result_count': recipe.count,
+                'can_craft': can_craft,
+                'missing': missing,
+                'max_craft': max_craft
+            })
+
+    def _count_items_in_inventory(self) -> dict:
+        counts = {}
+        for slot in self.slots:
+            if slot:
+                item = slot.get('item', '')
+                count = slot.get('count', 0)
+                counts[item] = counts.get(item, 0) + count
+        return counts
+
+    def _check_recipe_craftable(self, recipe, inventory_count: dict) -> tuple:
+        missing = {}
+        max_craft = float('inf')
+
+        for ingredient, needed in recipe.ingredients.items():
+            have = inventory_count.get(ingredient, 0)
+
+            if have < needed:
+                missing[ingredient] = needed - have
+
+            possible = have // needed
+            max_craft = min(max_craft, possible)
+
+        can_craft = len(missing) == 0 and max_craft > 0
+        max_craft = int(max_craft) if max_craft != float('inf') else 0
+
+        return can_craft, missing, max_craft
+
     def render(self, screen: pygame.Surface, game: 'Game'):
         """Affiche l'inventaire."""
         if not self.visible:
             return
 
+            # Met à jour les recettes (cache invalidé quand l'inventaire change)
+        self._update_craft_recipes()
+
+        screen_size = screen.get_size()
+
+        # Cache l'overlay
+        if self._overlay_cache is None or self._overlay_size != screen_size:
+            self._overlay_cache = pygame.Surface(screen_size, pygame.SRCALPHA)
+            self._overlay_cache.fill((0, 0, 0, 128))
+            self._overlay_size = screen_size
+
+        screen.blit(self._overlay_cache, (0, 0))
+
         panel_rect = self.get_panel_rect(screen)
 
-        # Fond semi-transparent
-        overlay = pygame.Surface((screen.get_width(), screen.get_height()), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 128))
-        screen.blit(overlay, (0, 0))
-
-        # Panneau principal
+        # Panneau inventaire
         pygame.draw.rect(screen, self.BG_COLOR, panel_rect)
         pygame.draw.rect(screen, self.BORDER_COLOR, panel_rect, 2)
 
-        # Titre
+        # Titre inventaire
         title = self.font.render("Inventaire", True, self.TEXT_COLOR)
         title_x = panel_rect.x + (panel_rect.width - title.get_width()) // 2
         screen.blit(title, (title_x, panel_rect.y + 10))
@@ -280,13 +384,21 @@ class InventoryUI:
         for i in range(self.COLS * self.ROWS):
             self._render_slot(screen, i, panel_rect, game)
 
+        # Panneau craft
+        self._render_craft_panel(screen, game)
+
         # Instructions
-        help_text = self.small_font.render("I/E: Fermer | Clic: Sélectionner | Clic droit: Transférer", True, (150, 150, 150))
+        help_text = self.small_font.render(
+            "Clic: x1 | Clic droit: x5 | Shift+Clic: Max",
+            True, (150, 150, 150)
+        )
         help_x = panel_rect.x + (panel_rect.width - help_text.get_width()) // 2
         screen.blit(help_text, (help_x, panel_rect.y + panel_rect.height - 25))
 
+        # Item draggé
         self._render_dragged_item(screen, game)
 
+        # Tooltip
         self._render_tooltip(screen, game)
 
     def _render_slot(self, screen: pygame.Surface, index: int, panel_rect: pygame.Rect, game: 'Game'):
@@ -496,6 +608,152 @@ class InventoryUI:
                     screen.blit(shadow, (count_x + 1, count_y + 1))
                     screen.blit(count_text, (count_x, count_y))
 
+    def _render_craft_panel(self, screen: pygame.Surface, game: 'Game'):
+        """Affiche le panneau de craft."""
+        craft_rect = self.get_craft_panel_rect(screen)
+
+        # Fond du panneau
+        pygame.draw.rect(screen, self.BG_COLOR, craft_rect)
+        pygame.draw.rect(screen, self.BORDER_COLOR, craft_rect, 2)
+
+        # Titre
+        title = self.font.render("Craft", True, self.TEXT_COLOR)
+        title_x = craft_rect.x + (craft_rect.width - title.get_width()) // 2
+        screen.blit(title, (title_x, craft_rect.y + 10))
+
+        # Zone des recettes
+        recipes_y = craft_rect.y + 40
+        recipes_height = craft_rect.height - 50
+        recipes_width = craft_rect.width - 10
+
+        # Surface intermédiaire pour le scroll
+        recipes_surface = pygame.Surface((recipes_width, recipes_height), pygame.SRCALPHA)
+        recipes_surface.fill((0, 0, 0, 0))
+
+        # Affiche chaque recette sur la surface intermédiaire
+        y = -self._craft_scroll_offset
+        for recipe in self._craft_recipes:
+            # Ne dessine que si visible
+            if y + self.RECIPE_HEIGHT > 0 and y < recipes_height:
+                self._render_recipe(recipes_surface, recipe, 0, y, recipes_width, game)
+            y += self.RECIPE_HEIGHT + self.RECIPE_PADDING
+
+        # Blit la surface sur l'écran
+        screen.blit(recipes_surface, (craft_rect.x + 5, recipes_y))
+
+        # Scrollbar optionnelle
+        self._render_scrollbar(screen, craft_rect, recipes_y, recipes_height)
+
+    def _render_scrollbar(self, screen: pygame.Surface, craft_rect: pygame.Rect, recipes_y: int, recipes_height: int):
+        """Affiche une scrollbar si nécessaire."""
+        total_height = len(self._craft_recipes) * (self.RECIPE_HEIGHT + self.RECIPE_PADDING)
+
+        if total_height <= recipes_height:
+            return  # Pas besoin de scrollbar
+
+        # Dimensions scrollbar
+        scrollbar_width = 6
+        scrollbar_x = craft_rect.right - scrollbar_width - 3
+
+        # Hauteur du thumb proportionnelle
+        thumb_height = max(20, int(recipes_height * (recipes_height / total_height)))
+
+        # Position du thumb
+        scroll_ratio = self._craft_scroll_offset / (total_height - recipes_height)
+        thumb_y = recipes_y + int(scroll_ratio * (recipes_height - thumb_height))
+
+        # Track (fond)
+        track_rect = pygame.Rect(scrollbar_x, recipes_y, scrollbar_width, recipes_height)
+        pygame.draw.rect(screen, (40, 40, 50), track_rect)
+
+        # Thumb
+        thumb_rect = pygame.Rect(scrollbar_x, thumb_y, scrollbar_width, thumb_height)
+        pygame.draw.rect(screen, (80, 80, 100), thumb_rect)
+
+    def _render_recipe(self, surface: pygame.Surface, recipe: dict, x: int, y: int, width: int, game: 'Game'):
+        """Affiche une recette individuelle."""
+        rect = pygame.Rect(x, y, width, self.RECIPE_HEIGHT)
+
+        # Couleur selon l'état
+        if recipe['name'] == self._hovered_recipe:
+            if recipe['can_craft']:
+                bg_color = (40, 80, 40)
+            else:
+                bg_color = (80, 40, 40)
+        else:
+            if recipe['can_craft']:
+                bg_color = (30, 60, 30)
+            else:
+                bg_color = (60, 30, 30)
+
+        # Fond
+        pygame.draw.rect(surface, bg_color, rect)
+        pygame.draw.rect(surface, self.BORDER_COLOR, rect, 1)
+
+        # Nom du résultat
+        name_color = (255, 255, 255) if recipe['can_craft'] else (150, 150, 150)
+        name_text = self.font.render(recipe['display_name'], True, name_color)
+        surface.blit(name_text, (x + 5, y + 5))
+
+        # Quantité produite
+        if recipe['result_count'] > 1:
+            count_text = self.small_font.render(f"x{recipe['result_count']}", True, self.COUNT_COLOR)
+            surface.blit(count_text, (x + 10 + name_text.get_width(), y + 8))
+
+        # Max craftable
+        if recipe['can_craft']:
+            max_text = self.small_font.render(f"Max: {recipe['max_craft']}", True, (150, 200, 150))
+            surface.blit(max_text, (x + width - max_text.get_width() - 5, y + 5))
+
+        # Ingrédients
+        ing_y = y + 28
+        inventory_count = self._count_items_in_inventory()
+
+        for ingredient, needed in recipe['ingredients'].items():
+            from admin.config import get_config
+            config = get_config()
+            item_config = config.items.get(ingredient)
+            ing_name = item_config.display_name if item_config else ingredient.replace('_', ' ').title()
+
+            have = inventory_count.get(ingredient, 0)
+            if have >= needed:
+                ing_color = (100, 255, 100)
+                text = f"[OK] {needed} {ing_name}"
+            else:
+                ing_color = (255, 100, 100)
+                text = f"[X] {needed} {ing_name} ({have})"
+
+            ing_text = self.small_font.render(text, True, ing_color)
+            surface.blit(ing_text, (x + 8, ing_y))
+            ing_y += 15
+
+    def _get_recipe_rect(self, index: int, craft_rect: pygame.Rect) -> pygame.Rect:
+        recipes_y = craft_rect.y + 40
+        y = recipes_y - self._craft_scroll_offset + index * (self.RECIPE_HEIGHT + self.RECIPE_PADDING)
+        return pygame.Rect(craft_rect.x + 5, y, craft_rect.width - 10, self.RECIPE_HEIGHT)
+
+    def _get_recipe_at_pos(self, pos: Tuple[int, int], screen: pygame.Surface) -> Optional[str]:
+        craft_rect = self.get_craft_panel_rect(screen)
+
+        if not craft_rect.collidepoint(pos):
+            return None
+
+        for i, recipe in enumerate(self._craft_recipes):
+            rect = self._get_recipe_rect(i, craft_rect)
+            if rect.collidepoint(pos):
+                return recipe['name']
+
+        return None
+
+    def scroll_craft_panel(self, delta: int, screen: pygame.Surface):
+        """Scroll le panneau de craft."""
+        craft_rect = self.get_craft_panel_rect(screen)
+        visible_height = craft_rect.height - 50  # Hauteur réelle de la zone recettes
+
+        total_height = len(self._craft_recipes) * (self.RECIPE_HEIGHT + self.RECIPE_PADDING)
+
+        max_scroll = max(0, total_height - visible_height)
+        self._craft_scroll_offset = max(0, min(max_scroll, self._craft_scroll_offset + delta))
 
 class InventorySlotData:
     """Données d'un slot pour le rendu."""

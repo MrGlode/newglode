@@ -261,3 +261,41 @@ class InventoryManager:
                 return resource
 
         return None
+
+    def handle_craft(self, player, recipe_name: str, count: int = 1) -> bool:
+        """Craft un item plusieurs fois."""
+        from admin.config import get_config
+        config = get_config()
+
+        recipe = config.assembler_recipes.get(recipe_name)
+        if not recipe:
+            return False
+
+        # Vérifie et craft X fois
+        crafted = 0
+        for _ in range(count):
+            # Vérifie les ingrédients
+            if not self._has_ingredients(player, recipe):
+                break
+
+            # Retire les ingrédients
+            for ingredient, needed in recipe.ingredients.items():
+                player.inventory.remove_item(ingredient, needed)
+
+            # Ajoute le résultat
+            overflow = player.inventory.add_item(recipe.result, recipe.count)
+            if overflow > 0:
+                # Inventaire plein - on arrête
+                # Rembourse les ingrédients ? Ou drop au sol ?
+                break
+
+            crafted += 1
+
+        return crafted > 0
+
+    def _has_ingredients(self, player, recipe) -> bool:
+        """Vérifie si le joueur a tous les ingrédients."""
+        for ingredient, needed in recipe.ingredients.items():
+            if player.inventory.count_item(ingredient) < needed:
+                return False
+        return True
