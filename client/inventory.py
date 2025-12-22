@@ -58,6 +58,10 @@ class InventoryUI:
         self._hovered_recipe: Optional[str] = None
         self._craft_recipes: List[dict] = []
 
+        # Sorting system
+        self._sort_button_rect: Optional[pygame.Rect] = None
+        self._sort_button_hovered = False
+
         # Couleurs
         self.BG_COLOR = (30, 30, 40)
         self.BORDER_COLOR = (100, 100, 120)
@@ -138,6 +142,10 @@ class InventoryUI:
 
         panel_rect = self.get_panel_rect(game.screen)
         craft_rect = self.get_craft_panel_rect(game.screen)
+
+        if self._sort_button_rect and self._sort_button_rect.collidepoint(pos) and button == 1:
+            self._request_sort(game)
+            return True
 
         # Clic sur le panneau craft
         if craft_rect.collidepoint(pos):
@@ -262,6 +270,7 @@ class InventoryUI:
         if not self.visible:
             self.hovered_slot = None
             self._hovered_recipe = None
+            self._sort_button_hovered = False
             return
 
         panel_rect = self.get_panel_rect(screen)
@@ -377,8 +386,11 @@ class InventoryUI:
 
         # Titre inventaire
         title = self.font.render("Inventaire", True, self.TEXT_COLOR)
-        title_x = panel_rect.x + (panel_rect.width - title.get_width()) // 2
+        title_x = panel_rect.x + 15
         screen.blit(title, (title_x, panel_rect.y + 10))
+
+        # Sorting
+        self._render_sort_button(screen, panel_rect)
 
         # Slots
         for i in range(self.COLS * self.ROWS):
@@ -400,6 +412,32 @@ class InventoryUI:
 
         # Tooltip
         self._render_tooltip(screen, game)
+
+    def _render_sort_button(self, screen: pygame.Surface, panel_rect: pygame.Rect):
+        """Affiche le bouton de tri."""
+        btn_width = 60
+        btn_height = 24
+        btn_x = panel_rect.right - btn_width - 15
+        btn_y = panel_rect.y + 8
+
+        self._sort_button_rect = pygame.Rect(btn_x, btn_y, btn_width, btn_height)
+
+        # Couleur selon hover
+        if self._sort_button_hovered:
+            bg_color = (70, 90, 70)
+            border_color = (120, 180, 120)
+        else:
+            bg_color = (50, 65, 50)
+            border_color = (80, 120, 80)
+
+        pygame.draw.rect(screen, bg_color, self._sort_button_rect)
+        pygame.draw.rect(screen, border_color, self._sort_button_rect, 1)
+
+        # Texte
+        text = self.small_font.render("Trier", True, (200, 255, 200))
+        text_x = btn_x + (btn_width - text.get_width()) // 2
+        text_y = btn_y + (btn_height - text.get_height()) // 2
+        screen.blit(text, (text_x, text_y))
 
     def _render_slot(self, screen: pygame.Surface, index: int, panel_rect: pygame.Rect, game: 'Game'):
         """Affiche un slot individuel."""
@@ -754,6 +792,13 @@ class InventoryUI:
 
         max_scroll = max(0, total_height - visible_height)
         self._craft_scroll_offset = max(0, min(max_scroll, self._craft_scroll_offset + delta))
+
+    def _request_sort(self, game: 'Game'):
+        """Envoie une demande de tri au serveur."""
+        if game.network:
+            game.network.send_inventory_sort()
+            from client.audio import get_audio
+            get_audio().play_ui_click()
 
 class InventorySlotData:
     """Données d'un slot pour le rendu."""

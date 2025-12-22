@@ -16,7 +16,8 @@ from shared.protocol import (
     MSG_INVENTORY_UPDATE, MSG_INVENTORY_ACTION,
     ACTION_BUILD, ACTION_DESTROY, ACTION_CONFIGURE,
     INV_ACTION_PICKUP, INV_ACTION_DROP, INV_ACTION_TRANSFER_TO,
-    INV_ACTION_TRANSFER_FROM, INV_ACTION_SWAP, INV_ACTION_CRAFT, INV_ACTION_SPLIT
+    INV_ACTION_TRANSFER_FROM, INV_ACTION_SWAP, INV_ACTION_CRAFT,
+    INV_ACTION_SPLIT, INV_ACTION_SORT
 )
 
 if TYPE_CHECKING:
@@ -272,4 +273,10 @@ class NetworkClient:
             'from_slot': from_slot,
             'to_slot': to_slot,
             'count': count
+        })
+
+    def send_inventory_sort(self):
+        """Demande à trier l'inventaire."""
+        self.send(MSG_INVENTORY_ACTION, {
+            'action': INV_ACTION_SORT
         })

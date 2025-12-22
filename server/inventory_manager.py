@@ -299,3 +299,58 @@ class InventoryManager:
             if player.inventory.count_item(ingredient) < needed:
                 return False
         return True
+
+    def handle_inventory_sort(self, player):
+        """Trie l'inventaire du joueur."""
+        inventory = player.inventory
+
+        # Récupère tous les items (non vides)
+        items = []
+        for slot in inventory.slots:
+            if slot:
+                items.append(slot.copy())
+
+        # Fusionne les stacks identiques
+        merged = {}
+        for item in items:
+            name = item.get('item', '')
+            count = item.get('count', 0)
+            if name in merged:
+                merged[name] += count
+            else:
+                merged[name] = count
+
+        # Tri par catégorie puis par nom
+        from admin.config import get_config
+        config = get_config()
+
+        category_order = {'raw': 0, 'plate': 1, 'intermediate': 2, 'science': 3}
+
+        def sort_key(item_name):
+            item_config = config.items.get(item_name)
+            if item_config:
+                cat_index = category_order.get(item_config.category, 99)
+                return (cat_index, item_config.display_name)
+            return (99, item_name)
+
+        sorted_items = sorted(merged.keys(), key=sort_key)
+
+        # Reconstruit les slots avec les stacks (max 100 par slot)
+        new_slots = []
+        max_stack = 100
+
+        for item_name in sorted_items:
+            total = merged[item_name]
+            while total > 0:
+                stack_size = min(total, max_stack)
+                new_slots.append({'item': item_name, 'count': stack_size})
+                total -= stack_size
+
+        # Remplit les slots vides
+        while len(new_slots) < inventory.MAX_SLOTS:
+            new_slots.append(None)
+
+        # Met à jour l'inventaire
+        inventory.slots = new_slots
+
+        return True

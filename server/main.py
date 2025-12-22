@@ -18,13 +18,15 @@ from shared.protocol import (
     MSG_INVENTORY_UPDATE, MSG_INVENTORY_ACTION,
     ACTION_BUILD, ACTION_DESTROY, ACTION_CONFIGURE,
     INV_ACTION_PICKUP, INV_ACTION_DROP, INV_ACTION_TRANSFER_TO,
-    INV_ACTION_TRANSFER_FROM, INV_ACTION_SWAP, INV_ACTION_CRAFT
+    INV_ACTION_TRANSFER_FROM, INV_ACTION_SWAP, INV_ACTION_CRAFT, INV_ACTION_SORT
 )
+
 from shared.constants import (
     WORLD_TICK_RATE, WORLD_TICK_INTERVAL,
     NETWORK_TICK_RATE, NETWORK_TICK_INTERVAL,
     PLAYER_VIEW_DISTANCE
 )
+
 from shared.entities import EntityType, Direction
 from shared.player import Player, Inventory
 from server.world import World
@@ -414,6 +416,10 @@ class GameServer:
 
             if self.inventory_manager.craft_item(player, recipe):
                 self.send_inventory_update(client_id)
+
+        elif action == INV_ACTION_SORT:
+            self.inventory_manager.handle_inventory_sort(player)
+            self.send_inventory_update(client_id)
 
     def send_inventory_update(self, client_id: int):
         """Envoie l'inventaire complet au client."""
